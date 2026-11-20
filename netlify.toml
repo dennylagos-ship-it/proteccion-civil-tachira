@@ -1,0 +1,10 @@
+"$schema" = "https://open-api.netlify.com/netlify.schema.json"
+
+[build]
+  publish = "netlify/static"
+
+[build.environment]
+  NODE_VERSION = "24"
+
+[server]
+  includedFiles = ["public/**", "node_modules/pdfkit/js/data/**"]

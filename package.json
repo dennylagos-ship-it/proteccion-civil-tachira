@@ -1,0 +1,18 @@
+{
+  "name": "proteccion-civil-tachira",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.mjs"
+  },
+  "dependencies": {
+    "@netlify/server": "0.1.6",
+    "pdfkit": "^0.21.0",
+    "pg": "8.23.1",
+    "qrcode": "^1.5.4"
+  }
+}
