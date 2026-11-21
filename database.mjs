@@ -35,6 +35,25 @@ export async function connectPostgres(connectionString) {
 
   try {
     await query('SELECT 1 FROM aula_privada.users LIMIT 1', []);
+    const coverTable = 'aula_privada.course_covers';
+    const hasCovers = async () => (await query('SELECT to_regclass(?) AS name', [coverTable])).rows[0].name;
+    if (!await hasCovers()) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock(762019)');
+        await client.query(`CREATE TABLE IF NOT EXISTS aula_privada.course_covers (
+          course integer PRIMARY KEY REFERENCES aula_privada.courses(id) ON DELETE CASCADE,
+          bytes bytea NOT NULL
+        )`);
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
   } catch (error) {
     await pool.end();
     throw error;

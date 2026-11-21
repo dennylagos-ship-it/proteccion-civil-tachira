@@ -29,6 +29,7 @@ PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT);
 CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, uid INTEGER REFERENCES users(id), expiry INTEGER);
 CREATE TABLE IF NOT EXISTS courses(id INTEGER PRIMARY KEY, owner INTEGER REFERENCES users(id), title TEXT, description TEXT, category TEXT, published INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS course_covers(course INTEGER PRIMARY KEY REFERENCES courses(id) ON DELETE CASCADE, bytes BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS lessons(id INTEGER PRIMARY KEY, course INTEGER REFERENCES courses(id), title TEXT, content TEXT, file TEXT, bytes BLOB);
 CREATE TABLE IF NOT EXISTS quizzes(id INTEGER PRIMARY KEY, course INTEGER REFERENCES courses(id), questions TEXT);
 CREATE TABLE IF NOT EXISTS enrollments(uid INTEGER REFERENCES users(id), course INTEGER REFERENCES courses(id), PRIMARY KEY(uid,course));
@@ -66,6 +67,13 @@ async function certificateProgram(course) {
 }
 const hash=(password,salt=randomBytes(16).toString('hex'))=>salt+':'+scryptSync(password,salt,64).toString('hex');
 const fail=(status,message)=>{throw Object.assign(new Error(message),{status});};
+function coverBytes(value) {
+ if(typeof value!=='string'||!value.length||value.length>1_398_104||value.length%4!==0||/[^A-Za-z0-9+/=]/.test(value)) fail(400,'Selecciona una imagen válida de hasta 1 MB.');
+ const bytes=Buffer.from(value,'base64');
+ if(bytes.length>1_048_576||bytes.length<10||bytes.toString('base64')!==value||
+    bytes[0]!==0xff||bytes[1]!==0xd8||bytes[2]!==0xff||bytes.at(-2)!==0xff||bytes.at(-1)!==0xd9) fail(400,'La portada debe ser una imagen JPEG válida de hasta 1 MB.');
+ return bytes;
+}
 const str=(v,max=500)=>typeof v==='string'?v.trim().slice(0,max):'';
 const email=v=>str(v,254).toLowerCase();
 async function addUser(input, role) {
@@ -268,11 +276,12 @@ export const server=createServer(async(req,res)=>{
   res.setHeader('Set-Cookie',cookie('',0));return json({});
  }
  if(method==='GET'&&path==='/api/me') return json(user||null);
- if(method==='GET'&&path==='/api/catalog') return json(await all('SELECT id,title,description,category FROM courses WHERE published=1 ORDER BY id'));
+ if(method==='GET'&&path==='/api/catalog') return json(await all('SELECT id,title,description,category,EXISTS(SELECT 1 FROM course_covers WHERE course=courses.id) AS has_cover FROM courses WHERE published=1 ORDER BY id'));
  if(method==='GET'&&path==='/api/mine'){
   auth();
   return json({
    courses:await all(`SELECT c.id,c.title,c.description,c.category,
+    EXISTS(SELECT 1 FROM course_covers WHERE course=c.id) AS has_cover,
     (SELECT count(*) FROM lessons WHERE course=c.id)+(SELECT count(*) FROM quizzes WHERE course=c.id) AS activities,
     (SELECT count(*) FROM lessons l JOIN progress p ON p.lesson=l.id AND p.uid=e.uid WHERE l.course=c.id)
     +(SELECT count(*) FROM quizzes q JOIN passes p ON p.quiz=q.id AND p.uid=e.uid WHERE q.course=c.id) AS completed
@@ -292,18 +301,34 @@ export const server=createServer(async(req,res)=>{
   const program=str(data.program,10000);
   return json({id:(await get('INSERT INTO courses(owner,title,description,category,program) VALUES (?,?,?,?,?) RETURNING id',user.id,title,description,category,program)).id},201);
  }
- const match=path.match(/^\/api\/courses\/(\d+)(?:\/(enroll|publish|lessons|quizzes|certificate|complete|submit|file)(?:\/(\d+))?)?$/);
+ const match=path.match(/^\/api\/courses\/(\d+)(?:\/(enroll|publish|lessons|quizzes|certificate|complete|submit|file|cover)(?:\/(\d+))?)?$/);
  if(match){
   const id=Number(match[1]),action=match[2],item=Number(match[3]);
   const course=await get('SELECT * FROM courses WHERE id=?',id);
   if(!course||(!course.published&&!staff(course))) fail(404,'Curso no disponible.');
+  if(action==='cover'&&!Number.isInteger(item)){
+   if(method==='GET'){
+    const cover=await get('SELECT bytes FROM course_covers WHERE course=?',id);
+    if(!cover) fail(404,'Este curso no tiene portada.');
+    res.writeHead(200,{'Content-Type':'image/jpeg'});
+    return res.end(cover.bytes);
+   }
+   if(method==='POST'){
+    auth(['teacher','admin']);
+    if(!staff(course)) fail(403,'Este curso pertenece a otro docente.');
+    const data=await body(req);
+    const bytes=coverBytes(data.bytes);
+    await run('INSERT INTO course_covers(course,bytes) VALUES (?,?) ON CONFLICT(course) DO UPDATE SET bytes=excluded.bytes',id,bytes);
+    return json({});
+   }
+  }
   if(method==='GET'&&!action){
    const access=staff(course)||await enrolled(course);
    const learners=staff(course)?await all(`SELECT u.name,
     (SELECT count(*) FROM lessons l JOIN progress p ON p.lesson=l.id AND p.uid=e.uid WHERE l.course=e.course) AS lessons,
     (SELECT count(*) FROM quizzes q JOIN passes p ON p.quiz=q.id AND p.uid=e.uid WHERE q.course=e.course) AS quizzes
     FROM enrollments e JOIN users u ON u.id=e.uid WHERE e.course=? ORDER BY u.name, u.id`,id):undefined;
-   return json({...course,staff:!!staff(course),enrolled:!!(await enrolled(course)),learners,
+   return json({...course,has_cover:!!await get('SELECT 1 FROM course_covers WHERE course=?',id),staff:!!staff(course),enrolled:!!(await enrolled(course)),learners,
     lessons:access?await all('SELECT id,title,content,file,video_url,EXISTS(SELECT 1 FROM progress WHERE uid=? AND lesson=lessons.id) AS done FROM lessons WHERE course=? ORDER BY id',user.id,id):[],
     quizzes:access?(await all('SELECT id,title,passing_score,questions,EXISTS(SELECT 1 FROM passes WHERE uid=? AND quiz=quizzes.id) AS passed FROM quizzes WHERE course=? ORDER BY id',user.id,id)).map(row=>{
      const questions=JSON.parse(row.questions);

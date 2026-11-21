@@ -121,3 +121,30 @@ fondo-operativos { display: contents; }
     --line: #3b4c65;
   }
 }
+
+.course-cover {
+ display: block;
+ width: 100%;
+ height: auto;
+ aspect-ratio: 16 / 9;
+ object-fit: cover;
+ background: #162e47;
+}
+.course-cover-default {
+ object-fit: contain;
+ padding: 12%;
+ background: radial-gradient(ellipse at 50% 40%, #355774, #142a42 72%);
+}
+.course-card > .course-cover {
+ width: calc(100% + 44px);
+ max-width: none;
+ margin: -22px -22px 0;
+ border-radius: 13px 13px 0 0;
+}
+.course-cover-editor { margin: 18px 0; }
+.course-cover-editor > .course-cover {
+ max-width: 420px;
+ margin-top: 16px;
+ border-radius: 10px;
+}
+.course-cover-editor form { max-width: 420px; }

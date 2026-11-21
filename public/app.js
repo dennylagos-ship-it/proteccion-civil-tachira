@@ -26,8 +26,12 @@ function navigation(){
   ? `<a class="portal-action portal-primary" href="#aula">Mi aula</a>${user.role!=='student'?'<a class="portal-action" href="#panel">Panel de gestión</a>':''}<button class="portal-action" data-action="logout">Salir</button>`
   : '<a class="portal-action portal-primary" href="#ingresar">Aula virtual</a>';
 }
+function coverImage(course){
+ const source=course.has_cover?'/api/courses/'+Number(course.id)+'/cover':'/proteccion-civil.png';
+ return `<img class="course-cover${course.has_cover?'':' course-cover-default'}" src="${source}" alt="" width="1200" height="675" loading="lazy">`;
+}
 function cards(courses){
- return courses.length?`<div class="grid">${courses.map(c=>`<article class="card"><span class="icon" aria-hidden="true">▤</span><span class="category">${safe(c.category)}</span><h3>${safe(c.title)}</h3><p class="muted">${safe(c.description)}</p>${Number(c.activities)>0?progressLabel(Number(c.completed),Number(c.activities)):''}${button(c.activities!==undefined?'Continuar curso':'Ver curso','#curso/'+c.id)}</article>`).join('')}</div>`:'<p class="muted">Aquí aparecerán los cursos disponibles.</p>';
+ return courses.length?`<div class="grid">${courses.map(c=>`<article class="card course-card">${coverImage(c)}<span class="category">${safe(c.category)}</span><h3>${safe(c.title)}</h3><p class="muted">${safe(c.description)}</p>${Number(c.activities)>0?progressLabel(Number(c.completed),Number(c.activities)):''}${button(c.activities!==undefined?'Continuar curso':'Ver curso','#curso/'+c.id)}</article>`).join('')}</div>`:'<p class="muted">Aquí aparecerán los cursos disponibles.</p>';
 }
 async function home(){
  const courses=await api('catalog').catch(()=>null);
@@ -66,7 +70,7 @@ async function home(){
  </section>
  <section class="section wrap" aria-labelledby="home-courses">
    <div class="home-section-heading"><h2 id="home-courses">Cursos disponibles</h2><a href="#cursos">Ver catálogo completo</a></div>
-   ${courses ? cards(courses.slice(0,4)) : '<p role="status">El catálogo no está disponible en este momento.</p>'}
+   ${courses ? cards(courses.toSorted((a,b)=>b.id-a.id).slice(0,4)) : '<p role="status">El catálogo no está disponible en este momento.</p>'}
  </section>
  <section class="home-directory" aria-label="Institución y contacto">
    <div class="wrap section home-directory-grid">
@@ -209,11 +213,23 @@ function courseReport(course) {
  </details>`;
 }
 
+function courseCoverEditor(course){
+ return `<details class="panel course-cover-editor">
+  <summary>Imagen de portada</summary>
+  ${coverImage(course)}
+  <form class="stack" data-form="cover" data-course="${Number(course.id)}">
+   ${field('Seleccionar imagen de portada','image','file','required accept="image/jpeg,image/png,image/webp"')}
+   <p class="muted">JPG, PNG o WebP de hasta 8 MB. La tarjeta usa un recorte horizontal de 16:9.</p>
+   <button>Guardar portada</button>
+  </form>
+ </details>`;
+}
+
 async function course(id){
  const c=await api('courses/'+id);
  const editor=c.staff&&!c.published?`<section class="panel"><h2>Preparar el curso</h2><details><summary>Subir clase</summary><form class="stack" data-form="lesson" data-course="${id}"><div>${field('Título','title')}${area('Contenido','content','')}${field('Material de estudio (PDF u otro archivo, hasta 8 MB)','file','file','')}${field('Enlace de YouTube o Vimeo','videoUrl','url','placeholder="https://…"')}<button>Guardar clase</button></div></form></details>${quizEditor(id)}<p><button class="primary" data-action="publish" data-course="${id}">Publicar curso</button></p></section>`:'';
  const ready=c.lessons.length&&c.quizzes.length&&c.lessons.every(l=>l.done)&&c.quizzes.every(q=>q.passed);
- return section(safe(c.title),`<div class="category">${safe(c.category)}</div><p>${safe(c.description)}</p>${!c.enrolled&&!c.staff?(user?'<button class="primary" data-action="enroll" data-course="'+id+'">Inscribirme</button>':button('Inicia sesión para inscribirte','#ingresar','primary')):''}${editor}${courseReport(c)}<div class="course-layout">${courseOutline(c)}<div class="stack course-activities">${c.lessons.map(l=>`<article class="panel" id="lesson-${l.id}" tabindex="-1"><h2>${safe(l.title)}</h2><p class="lesson-text">${safe(l.content)}</p>${lessonMaterials(id,l)}${c.staff?lessonResourceEditor(id,l):''}${c.enrolled?(l.done?'<span class="tag">Clase completada</span>':`<button data-action="complete" data-course="${id}" data-id="${l.id}">Marcar como completada</button>`):''}</article>`).join('')}${c.quizzes.map((q,i)=>`<article class="panel" id="quiz-${q.id}" tabindex="-1"><h2>${safe(q.title || ("Evaluación "+(i+1)))}</h2><p class="muted">Aprobación mínima: ${Number(q.passing_score)} %</p>${c.staff&&!c.published?quizEditor(id,q):''}${q.passed?'<p class="tag">Evaluación aprobada</p>':''}${c.enrolled?`<form data-form="submit" data-course="${id}" data-id="${q.id}" data-types="${q.questions.map(x=>x.type).join(',')}">${q.questions.map((x,j)=>`<fieldset class="question"><legend>${safe(x.prompt)}</legend><p class="muted">${types[x.type]} · ${x.points ?? 1} puntos</p>${quizInputs(x,j)}</fieldset>`).join('')}<button>Enviar respuestas</button></form>`:`<ul class="list">${q.questions.map(x=>`<li>${safe(x.prompt)} · ${types[x.type]}</li>`).join('')}</ul>`}</article>`).join('')}${c.enrolled?`<section class="panel"><h2>Certificado</h2>${ready?`<button class="primary" data-action="certificate" data-course="${id}">Obtener certificado</button>`:'<p>Completa todas las clases y aprueba las evaluaciones para obtener tu certificado.</p>'}</section>`:''}</div></div>`);
+ return section(safe(c.title),`<div class="category">${safe(c.category)}</div><p>${safe(c.description)}</p>${!c.enrolled&&!c.staff?(user?'<button class="primary" data-action="enroll" data-course="'+id+'">Inscribirme</button>':button('Inicia sesión para inscribirte','#ingresar','primary')):''}${c.staff?courseCoverEditor(c):''}${editor}${courseReport(c)}<div class="course-layout">${courseOutline(c)}<div class="stack course-activities">${c.lessons.map(l=>`<article class="panel" id="lesson-${l.id}" tabindex="-1"><h2>${safe(l.title)}</h2><p class="lesson-text">${safe(l.content)}</p>${lessonMaterials(id,l)}${c.staff?lessonResourceEditor(id,l):''}${c.enrolled?(l.done?'<span class="tag">Clase completada</span>':`<button data-action="complete" data-course="${id}" data-id="${l.id}">Marcar como completada</button>`):''}</article>`).join('')}${c.quizzes.map((q,i)=>`<article class="panel" id="quiz-${q.id}" tabindex="-1"><h2>${safe(q.title || ("Evaluación "+(i+1)))}</h2><p class="muted">Aprobación mínima: ${Number(q.passing_score)} %</p>${c.staff&&!c.published?quizEditor(id,q):''}${q.passed?'<p class="tag">Evaluación aprobada</p>':''}${c.enrolled?`<form data-form="submit" data-course="${id}" data-id="${q.id}" data-types="${q.questions.map(x=>x.type).join(',')}">${q.questions.map((x,j)=>`<fieldset class="question"><legend>${safe(x.prompt)}</legend><p class="muted">${types[x.type]} · ${x.points ?? 1} puntos</p>${quizInputs(x,j)}</fieldset>`).join('')}<button>Enviar respuestas</button></form>`:`<ul class="list">${q.questions.map(x=>`<li>${safe(x.prompt)} · ${types[x.type]}</li>`).join('')}</ul>`}</article>`).join('')}${c.enrolled?`<section class="panel"><h2>Certificado</h2>${ready?`<button class="primary" data-action="certificate" data-course="${id}">Obtener certificado</button>`:'<p>Completa todas las clases y aprueba las evaluaciones para obtener tu certificado.</p>'}</section>`:''}</div></div>`);
 }
 async function verify(code){
  let result='';
@@ -327,6 +343,25 @@ root.addEventListener('submit',async event=>{
   }
   if(kind==='teacher'){await api('staff',data);message('Cuenta docente creada.');}
   if(kind==='createCourse'){const result=await api('courses',data);location.hash='curso/'+result.id;return;}
+  if(kind==='cover'){
+   const file=data.image;
+   if(!file?.size||file.size>8*1024*1024||!['image/jpeg','image/png','image/webp'].includes(file.type)) {
+    throw Error('Selecciona una imagen JPG, PNG o WebP de hasta 8 MB.');
+   }
+   const image=await createImageBitmap(file).catch(()=>{throw Error('No se pudo abrir la imagen.');});
+   const canvas=document.createElement('canvas');
+   canvas.width=1200; canvas.height=675;
+   const context=canvas.getContext('2d',{alpha:false});
+   const width=Math.min(image.width,image.height*16/9);
+   const height=Math.min(image.height,image.width*9/16);
+   context.fillStyle='#fff';
+   context.fillRect(0,0,1200,675);
+   context.drawImage(image,(image.width-width)/2,(image.height-height)/2,width,height,0,0,1200,675);
+   image.close();
+   const bytes=canvas.toDataURL('image/jpeg',0.86).split(',')[1];
+   await api('courses/'+id+'/cover',{bytes});
+   message('Portada guardada.');
+  }
   if(kind==='lesson'){
    const file=data.file;
    if(file.size>8*1024*1024)throw Error('El archivo excede 8 MB.');
