@@ -1,6 +1,6 @@
 import {createServer} from 'node:http';
 import {DatabaseSync} from 'node:sqlite';
-import {randomBytes, scryptSync, timingSafeEqual} from 'node:crypto';
+import {createHmac, randomBytes, scryptSync, timingSafeEqual} from 'node:crypto';
 import {existsSync, mkdirSync, readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -8,6 +8,7 @@ import {buffer} from 'node:stream/consumers';
 import {connectPostgres} from './database.mjs';
 import QRCode from 'qrcode';
 import PDFDocument from 'pdfkit';
+import nodemailer from 'nodemailer';
 import {demoCourses} from './demo-courses.mjs';
 import {renderCertificatePdf} from './certificate-pdf.mjs';
 import {videoEmbed} from './public/lesson-media.js';
@@ -77,6 +78,57 @@ if(process.env.ADMIN_PASSWORD && !await get("SELECT id FROM users WHERE role='ad
   await addUser({name:'Administración',email:process.env.ADMIN_EMAIL,password:process.env.ADMIN_PASSWORD},'admin');
 }
 const publicOrigin=process.env.PUBLIC_URL ? new URL(process.env.PUBLIC_URL).origin : '';
+const resetSecret=process.env.PASSWORD_RESET_SECRET;
+const resetSender=process.env.PASSWORD_RESET_FROM;
+const resendKey=process.env.RESEND_API_KEY;
+const gmailUser=email(process.env.GMAIL_USER);
+const gmailPassword=process.env.GMAIL_APP_PASSWORD?.replace(/\s/g,'');
+const gmail=gmailUser&&gmailPassword ? nodemailer.createTransport({
+ service:'gmail',auth:{user:gmailUser,pass:gmailPassword},
+ connectionTimeout:5000,greetingTimeout:5000,socketTimeout:8000
+}) : null;
+const resetConfigured=publicOrigin.startsWith('https://')&&resetSecret?.length>=32&&(gmail||(resetSender&&resendKey));
+const resetWindow=15*60*1000;
+const gmailRequests=new Map();
+const resetSignature=(account,expires)=>createHmac('sha256',resetSecret)
+ .update(JSON.stringify(['password-reset',account.id,account.password,expires])).digest('hex');
+
+async function sendResetEmail(address){
+ const account=await get('SELECT id,email,password FROM users WHERE email=?',address);
+ if(!account) return;
+ // Keep requests within each time window identical so Resend deduplicates repeated emails.
+ const expires=(Math.floor(Date.now()/resetWindow)+2)*resetWindow;
+ const token=[account.id,expires,resetSignature(account,expires)].join('.');
+ const link=publicOrigin+'/#restablecer/'+token;
+ const subject='Restablecer tu contraseña del Aula Virtual';
+ const text='Para elegir una nueva contraseña, abre este enlace durante los próximos 15 minutos:\n\n'+link+'\n\nSi no lo solicitaste, puedes ignorar este mensaje.';
+ if(gmail){
+  const now=Date.now();
+  for(const [id,until] of gmailRequests) if(until<=now) gmailRequests.delete(id);
+  if(gmailRequests.has(account.id)||gmailRequests.size>=100) return;
+  gmailRequests.set(account.id,now+resetWindow);
+  try{
+   await gmail.sendMail({from:{name:'Aula PC Táchira',address:gmailUser},to:account.email,subject,text});
+  }catch(error){
+   gmailRequests.delete(account.id);
+   console.error('Gmail no pudo enviar el correo de recuperación.',error.code||'SMTP');
+  }
+  return;
+ }
+ try {
+  const result=await fetch('https://api.resend.com/emails',{
+   method:'POST',
+   headers:{Authorization:'Bearer '+resendKey,'Content-Type':'application/json','Idempotency-Key':'aula-reset/'+token},
+   body:JSON.stringify({
+    from:resetSender,to:[account.email],subject,text
+   }),
+   signal:AbortSignal.timeout(8000)
+  });
+  if(!result.ok) console.error('El proveedor rechazó el correo de recuperación.',result.status);
+ } catch {
+  console.error('No se pudo contactar al proveedor de correo de recuperación.');
+ }
+}
 const types=['single','multiple','boolean','text','numeric','ordering'];
 const normalized=value=>str(value,500).normalize('NFC').toLocaleLowerCase('es');
 function grades(q,a){
@@ -171,6 +223,33 @@ export const server=createServer(async(req,res)=>{
  const auth=(roles)=>{if(!user) fail(401,'Inicia sesión para continuar.');if(roles&&!roles.includes(user.role)) fail(403,'No tienes acceso a esta acción.');};
  const staff=course=>user?.role==='admin'||(user?.role==='teacher'&&user.id===course.owner);
  const enrolled=async course=>user && await get('SELECT 1 FROM enrollments WHERE uid=? AND course=?',user.id,course.id);
+ if(method==='POST'&&path==='/api/password/forgot'){
+  if(!resetConfigured) fail(503,'El restablecimiento por correo aún no está disponible.');
+  const data=await body(req);
+  // A uniform response keeps this endpoint from revealing whether an account exists.
+  await sendResetEmail(email(data.email));
+  return json({});
+ }
+ if(method==='POST'&&path==='/api/password/reset'){
+  if(!resetConfigured) fail(503,'El restablecimiento por correo aún no está disponible.');
+  const data=await body(req), password=str(data.password,200);
+  const invalid=()=>fail(400,'El enlace ya se usó o venció. Solicita otro enlace.');
+  if(password.length<10) fail(400,'Usa una contraseña de al menos 10 caracteres.');
+  const match=typeof data.token==='string'&&data.token.match(/^([1-9]\d{0,9})\.(\d{13})\.([a-f0-9]{64})$/);
+  if(!match||Number(match[2])<=Date.now()||Number(match[1])>2147483647) invalid();
+  const id=Number(match[1]), expires=Number(match[2]);
+  const account=await get('SELECT id,password FROM users WHERE id=?',id);
+  if(!account||!timingSafeEqual(Buffer.from(match[3],'hex'),Buffer.from(resetSignature(account,expires),'hex'))) invalid();
+  const updatedPassword=hash(password);
+  await database.transaction(async()=>{
+   if(expires<=Date.now()) invalid();
+   const updated=await get('UPDATE users SET password=? WHERE id=? AND password=? RETURNING id',updatedPassword,id,account.password);
+   if(!updated) invalid();
+   await run('DELETE FROM sessions WHERE uid=?',id);
+  });
+  res.setHeader('Set-Cookie',cookie('',0));
+  return json({});
+ }
  if(method==='POST' && (path==='/api/login'||path==='/api/register')){
    const data=await body(req);
    if(path.endsWith('/register')) await addUser(data,'student');

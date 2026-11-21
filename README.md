@@ -31,3 +31,11 @@ El QR usa `PUBLIC_URL`. Si se omite, apunta al servidor local y sirve para prueb
 4. Después del despliegue, comprueba desde un dispositivo externo el registro, el inicio de sesión, una inscripción y la verificación de un certificado.
 
 Las bases SQLite locales y las credenciales se excluyen del repositorio. Si necesitas trasladar datos existentes a Neon, importa los datos antes de habilitar el acceso público.
+
+## Recuperación de contraseña
+
+Activa el envío configurando `RESEND_API_KEY`, `PASSWORD_RESET_FROM` (un remitente de un dominio verificado en Resend) y `PASSWORD_RESET_SECRET` (un secreto aleatorio de al menos 32 caracteres) en el entorno de ejecución. En Netlify, usa alcance Functions y vuelve a desplegar después de configurar las variables. `PUBLIC_URL` debe ser el origen HTTPS del aula.
+
+La pantalla de inicio de sesión incluye **Olvidé mi contraseña**. El enlace es temporal y, al elegir una nueva contraseña, se invalida y se cierran las sesiones anteriores. Los datos académicos se conservan.
+
+Para usar Gmail como remitente, configura `GMAIL_USER` con la dirección de Gmail, `GMAIL_APP_PASSWORD` como secreto y `PASSWORD_RESET_SECRET` como secreto. Si se configura Gmail, se usa en lugar de Resend.

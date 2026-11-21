@@ -90,8 +90,22 @@ async function home(){
    </div>
  </section>`;
 }
+function passwordRecovery(token=''){
+ const resetting=Boolean(token);
+ return section(resetting?'Elige una nueva contraseña':'Recuperar contraseña',`<div class="panel narrow">
+  <form data-form="${resetting?'resetPassword':'forgotPassword'}">
+   ${resetting?`
+    <input type="hidden" name="token" value="${safe(token)}">
+    ${field('Nueva contraseña','password','password','required minlength="10" maxlength="200" autocomplete="new-password"')}
+    ${field('Confirma la nueva contraseña','confirmation','password','required minlength="10" maxlength="200" autocomplete="new-password"')}
+   `:field('Correo electrónico de tu cuenta','email','email','required maxlength="254" autocomplete="email"')}
+   <button class="primary">${resetting?'Cambiar contraseña':'Enviar enlace de recuperación'}</button>
+  </form>
+  <p><a href="${resetting?'#recuperar':'#ingresar'}">${resetting?'Solicitar otro enlace':'Volver a iniciar sesión'}</a></p>
+ </div>`);
+}
 function login(register){
- return section(register?'Crear cuenta':'Entrar al aula',`<div class="panel narrow"><form data-form="${register?'register':'login'}">${register?field('Nombre completo','name','text','required autocomplete="name"'):''}${field('Correo electrónico','email','email','required autocomplete="email"')}${field('Contraseña','password','password',register?'required minlength="10" autocomplete="new-password"':'required autocomplete="current-password"')}<button class="primary">${register?'Crear cuenta':'Iniciar sesión'}</button></form><p>${register?'<a href="#ingresar">Ya tengo cuenta</a>':'<a href="#registro">Crear cuenta de estudiante</a>'}</p></div>`);
+ return section(register?'Crear cuenta':'Entrar al aula',`<div class="panel narrow"><form data-form="${register?'register':'login'}">${register?field('Nombre completo','name','text','required autocomplete="name"'):''}${field('Correo electrónico','email','email','required autocomplete="email"')}${field('Contraseña','password','password',register?'required minlength="10" autocomplete="new-password"':'required autocomplete="current-password"')}<button class="primary">${register?'Crear cuenta':'Iniciar sesión'}</button></form><p>${register?'<a href="#ingresar">Ya tengo cuenta</a>':'<a href="#recuperar">Olvidé mi contraseña</a> · <a href="#registro">Crear cuenta de estudiante</a>'}</p></div>`);
 }
 async function dashboard(){
  if(!user)return login(false);
@@ -220,6 +234,9 @@ async function render(){
   if(!route&&code) html=await verify(code);
   else if(route==='cursos')html=section('Catálogo de cursos',cards(await api('catalog')));
   else if(route==='ingresar'||route==='registro')html=login(route==='registro');
+  else if(route==='recuperar')html=passwordRecovery();
+  else if(/^restablecer\/[1-9]\d{0,9}\.\d{13}\.[a-f0-9]{64}$/.test(route))html=passwordRecovery(route.split('/')[1]);
+  else if(route.startsWith('restablecer/'))html=section('Enlace no válido',button('Solicitar otro enlace','#recuperar'));
   else if(route==='aula')html=await dashboard();
   else if(route==='panel')html=await panel();
   else if(route==='verificar')html=await verify('');
@@ -291,6 +308,20 @@ root.addEventListener('submit',async event=>{
  if(submitter)submitter.disabled=true;
  try{
   if(kind==='verify'){location.href='/?verify='+encodeURIComponent(data.code.trim());return;}
+  if(kind==='forgotPassword'){
+   await api('password/forgot',{email:data.email});
+   form.innerHTML='<p role="status">Si el correo está registrado, recibirás un enlace para cambiar tu contraseña. Revisa también la carpeta de correo no deseado.</p>';
+   return;
+  }
+  if(kind==='resetPassword'){
+   if(data.password!==data.confirmation)throw Error('Las contraseñas deben coincidir.');
+   await api('password/reset',{token:data.token,password:data.password});
+   user=null;
+   history.replaceState(null,'','#ingresar');
+   await render();
+   message('Contraseña actualizada. Ya puedes iniciar sesión.');
+   return;
+  }
   if(kind==='login'||kind==='register'){
    user=await api(kind,data);location.hash=user.role==='student'?'aula':'panel';return;
   }
