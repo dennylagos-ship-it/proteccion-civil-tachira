@@ -49,7 +49,7 @@ async function home(){
  <section class="section wrap" aria-labelledby="welcome-title">
    <div class="welcome-panel">
      <div class="welcome-copy">
-       <p class="welcome-label">Dirección de Protección Civil Táchira · Mensaje propuesto</p>
+       <p class="welcome-label">Dirección de Protección Civil Táchira</p>
        <h2 id="welcome-title">Bienvenidos a Protección Civil Táchira</h2>
        <p>Este portal está al servicio de quienes quieren prepararse para una emergencia y ayudar a su comunidad. Aquí pueden conocer nuestra historia, consultar los canales de atención y acceder al aula virtual para formarse en prevención y gestión del riesgo.</p>
        <p>Les invitamos a llevar lo aprendido a sus hogares, escuelas y lugares de trabajo. Una comunidad que sabe cómo actuar está mejor preparada para cuidar a su gente.</p>
