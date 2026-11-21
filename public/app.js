@@ -244,12 +244,31 @@ async function course(id){
  const ready=c.lessons.length&&c.quizzes.length&&c.lessons.every(l=>l.done)&&c.quizzes.every(q=>q.passed);
  return section(safe(c.title),`<div class="category">${safe(c.category)}</div><p>${safe(c.description)}</p>${!c.enrolled&&!c.staff?(user?'<button class="primary" data-action="enroll" data-course="'+id+'">Inscribirme</button>':button('Inicia sesión para inscribirte','#ingresar','primary')):''}${c.staff?courseCoverEditor(c):''}${editor}${courseReport(c)}<div class="course-layout">${courseOutline(c)}<div class="stack course-activities">${c.lessons.map(l=>`<article class="panel" id="lesson-${l.id}" tabindex="-1"><h2>${safe(l.title)}</h2><p class="lesson-text">${safe(l.content)}</p>${lessonMaterials(id,l)}${c.staff?lessonResourceEditor(id,l):''}${c.enrolled?(l.done?'<span class="tag">Clase completada</span>':`<button data-action="complete" data-course="${id}" data-id="${l.id}">Marcar como completada</button>`):''}</article>`).join('')}${c.quizzes.map((q,i)=>`<article class="panel" id="quiz-${q.id}" tabindex="-1"><h2>${safe(q.title || ("Evaluación "+(i+1)))}</h2><p class="muted">Aprobación mínima: ${Number(q.passing_score)} %</p>${c.staff&&!c.published?quizEditor(id,q):''}${q.passed?'<p class="tag">Evaluación aprobada</p>':''}${c.enrolled?`<form data-form="submit" data-course="${id}" data-id="${q.id}" data-types="${q.questions.map(x=>x.type).join(',')}">${q.questions.map((x,j)=>`<fieldset class="question"><legend>${safe(x.prompt)}</legend><p class="muted">${types[x.type]} · ${x.points ?? 1} puntos</p>${quizInputs(x,j)}</fieldset>`).join('')}<button>Enviar respuestas</button></form>`:`<ul class="list">${q.questions.map(x=>`<li>${safe(x.prompt)} · ${types[x.type]}</li>`).join('')}</ul>`}</article>`).join('')}${c.enrolled?`<section class="panel"><h2>Certificado</h2>${ready?`<button class="primary" data-action="certificate" data-course="${id}">Obtener certificado</button>`:'<p>Completa todas las clases y aprueba las evaluaciones para obtener tu certificado.</p>'}</section>`:''}</div></div>`);
 }
+function linkedInCertificate(certificate) {
+ const url=new URL('/?verify='+certificate.code,location.origin).href;
+ return `<details class="panel certificate-linkedin no-print">
+  <summary>Agregar a LinkedIn</summary>
+  <p>Abre «Licencias y certificaciones» y completa los campos con estos datos.</p>
+  <dl>
+   <dt>Nombre de la certificación</dt><dd>${safe(certificate.title)}</dd>
+   <dt>Organización emisora</dt><dd>Instituto Autónomo de Protección Civil del Estado Táchira</dd>
+   <dt>Emisión</dt><dd>${dateFmt.format(new Date(certificate.issued))}</dd>
+   <dt>Vencimiento</dt><dd>${dateFmt.format(new Date(certificate.expires))}</dd>
+   <dt>ID de la credencial</dt><dd><code>${safe(certificate.code)}</code></dd>
+   <dt>URL de la credencial</dt><dd><a href="${safe(url)}">${safe(url)}</a></dd>
+  </dl>
+  <div class="actions">
+   <a class="btn primary" href="https://www.linkedin.com/profile/add?startTask=CERTIFICATION_NAME" target="_blank" rel="noopener noreferrer">Abrir LinkedIn</a>
+   <button type="button" data-action="copy-certificate-link" data-id="${safe(certificate.code)}">Copiar URL de verificación</button>
+  </div>
+ </details>`;
+}
 async function verify(code){
  let result='';
  if(code){
   try{
    const c=await api('verify/'+encodeURIComponent(code.toLowerCase()));
-   result=`<section class="panel certificate"><img class="certificate-emblem" src="/proteccion-civil.png" alt="Escudo de Protección Civil"><p class="certificate-institution">Protección Civil Táchira</p><h2>Certificado de aprobación</h2><p>Se otorga el presente certificado a</p><h3>${safe(c.name)}</h3><p>Por haber aprobado el curso</p><strong class="certificate-course">${safe(c.title)}</strong><div class="certificate-meta"><div><span>Emisión</span><strong>${dateFmt.format(new Date(c.issued))}</strong></div><div><span>Vigencia hasta</span><strong>${dateFmt.format(new Date(c.expires))}</strong><span class="${c.valid?'tag':'expired'}">${c.valid?'Vigente':'Vencido'}</span></div><div><span>Verificación</span><code>${c.code}</code></div><img class="certificate-qr" src="/api/verify/${c.code}/qr" alt="Código QR para verificar el certificado"></div></section><div class="actions certificate-actions no-print"><a class="btn primary" href="/api/verify/${c.code}/pdf" download>Descargar PDF</a><button data-action="share-certificate" data-id="${c.code}">Compartir enlace</button><button data-action="print">Imprimir</button></div><section class="panel certificate-program stack"><h2>Contenido programático</h2><strong>${safe(c.title)}</strong>${c.program.summary?'<p>'+safe(c.program.summary)+'</p>':''}${c.program.topics.length?'<ol class="list">'+c.program.topics.map(topic=>'<li>'+safe(topic)+'</li>').join('')+'</ol>':'<p class="muted">Temario no disponible en el registro del curso.</p>'}</section>`;
+   result=`<section class="panel certificate"><img class="certificate-emblem" src="/proteccion-civil.png" alt="Escudo de Protección Civil"><p class="certificate-institution">Protección Civil Táchira</p><h2>Certificado de aprobación</h2><p>Se otorga el presente certificado a</p><h3>${safe(c.name)}</h3><p>Por haber aprobado el curso</p><strong class="certificate-course">${safe(c.title)}</strong><div class="certificate-meta"><div><span>Emisión</span><strong>${dateFmt.format(new Date(c.issued))}</strong></div><div><span>Vigencia hasta</span><strong>${dateFmt.format(new Date(c.expires))}</strong><span class="${c.valid?'tag':'expired'}">${c.valid?'Vigente':'Vencido'}</span></div><div><span>Verificación</span><code>${c.code}</code></div><img class="certificate-qr" src="/api/verify/${c.code}/qr" alt="Código QR para verificar el certificado"></div></section><div class="actions certificate-actions no-print"><a class="btn primary" href="/api/verify/${c.code}/pdf" download>Descargar PDF</a><button data-action="share-certificate" data-id="${c.code}">Compartir enlace</button><button data-action="print">Imprimir</button></div>${linkedInCertificate(c)}<section class="panel certificate-program stack"><h2>Contenido programático</h2><strong>${safe(c.title)}</strong>${c.program.summary?'<p>'+safe(c.program.summary)+'</p>':''}${c.program.topics.length?'<ol class="list">'+c.program.topics.map(topic=>'<li>'+safe(topic)+'</li>').join('')+'</ol>':'<p class="muted">Temario no disponible en el registro del curso.</p>'}</section>`;
   }catch(error){result=`<p class="panel expired" role="alert">${safe(error.message)}</p>`;}
  }
  return section('Verificar certificado',`<div class="narrow"><form class="panel no-print" data-form="verify">${field('Código del certificado','code','text',`required pattern="[0-9a-fA-F]{32}" maxlength="32" value="${safe(code)}"`)}<button class="primary">Consultar certificado</button></form>${result}</div>`);
@@ -300,10 +319,12 @@ document.addEventListener('click',async event=>{
    activity?.scrollIntoView({block:'start'});
    return;
   }
-  if(action==='copy-course-link'){
-   const url=new URL('/curso/'+id,location.origin).href;
-   try{await navigator.clipboard.writeText(url);message('Enlace del curso copiado.');}
-   catch{window.prompt('Copia el enlace del curso',url);}
+  if(action==='copy-course-link'||action==='copy-certificate-link'){
+   const certificate=action==='copy-certificate-link';
+   const url=new URL(certificate?'/?verify='+id:'/curso/'+id,location.origin).href;
+   const label=certificate?'del certificado':'del curso';
+   try{await navigator.clipboard.writeText(url);message('Enlace '+label+' copiado.');}
+   catch{window.prompt('Copia el enlace '+label,url);}
    return;
   }
   if(action==='share-certificate'){

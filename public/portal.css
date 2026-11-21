@@ -172,3 +172,8 @@ fondo-operativos { display: contents; }
  color: inherit;
  text-decoration: underline;
 }
+
+.certificate-linkedin { margin-block: 18px; }
+.certificate-linkedin summary { cursor: pointer; font-weight: 700; }
+.certificate-linkedin dt { font-weight: 700; }
+.certificate-linkedin dd { margin: 3px 0 12px; overflow-wrap: anywhere; }
