@@ -65,7 +65,7 @@ export const demoCourses = [
       ['Roles y observación', 'Asigna a una persona la facilitación, a otras los roles del escenario y a otra la observación. Antes de comenzar, acuerden qué registrarán: claridad de los avisos, cumplimiento de los roles y dificultades en la coordinación.'],
       ['Evaluación posterior', 'Al cerrar, compara lo ocurrido con el objetivo. Registra una fortaleza y una brecha con un ejemplo observado. Para cada mejora, acuerda una acción, un responsable y una fecha de revisión.'],
     ],
-    activity: 'Ficha de ejercicio: escenario, objetivo, participantes, observaciones, mejora propuesta, responsable y fecha de seguimiento.',
+    activity: 'Ficha de ejercicio: escenario, objetivo, participantes, observaciones, acción de mejora, responsable y fecha de seguimiento.',
     questions: [
       single('¿Qué objetivo puede evaluarse en un ejercicio de mesa?', ['Hacer todo mejor', 'Verificar si el equipo identifica a quién avisar', 'Tener más asistentes en general'], 1),
       boolean('La persona observadora registra lo que ocurre durante el ejercicio.', true),
