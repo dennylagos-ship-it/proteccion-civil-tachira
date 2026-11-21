@@ -129,10 +129,25 @@ async function dashboard(){
  const data=await api('mine');
  return section('Mi aula',`<p>Hola, ${safe(user.name)}.</p>${cards(data.courses)}<div class="panel stack"><h2>Mis certificados</h2>${data.certificates.length?`<ul class="list">${data.certificates.map(c=>`<li><a href="/?verify=${c.code}">${safe(c.title)}</a> · vence el ${dateFmt.format(new Date(c.expires))}</li>`).join('')}</ul>`:'<p class="muted">Tus certificados aparecerán cuando los emitas.</p>'}</div>`);
 }
+function promoteAccountForm(users){
+ const eligible=users.filter(user=>user.role==='student'||user.role==='teacher');
+ if(!eligible.length) return '';
+ return `<details>
+  <summary>Cambiar rol a Administración</summary>
+  <form class="stack" data-form="promote">
+   <p>Administración puede gestionar todos los cursos y usuarios. La cuenta tendrá que iniciar sesión de nuevo.</p>
+   <label class="field">Cuenta<select name="userId" required>
+    <option value="">Seleccionar cuenta</option>
+    ${eligible.map(user=>`<option value="${Number(user.id)}">${safe(user.name)} · ${safe(user.email)}</option>`).join('')}
+   </select></label>
+   <button>Dar acceso de administrador</button>
+  </form>
+ </details>`;
+}
 async function panel(){
  if(!user)return login(false);
  const {courses,users}=await api('staff');
- return section(user.role==='admin'?'Administración':'Panel docente',`<div class="stack"><section class="panel"><h2>Gestionar cursos</h2><ul class="list">${courses.map(c=>`<li><a href="#curso/${c.id}">${safe(c.title)}</a> · ${c.published?'Publicado':'Borrador'}${c.teacher?' · '+safe(c.teacher):''}</li>`).join('')}</ul><details${courses.length?'':' open'}><summary>Crear curso</summary><form class="stack" data-form="createCourse"><div>${field('Título','title')}${field('Categoría','category')}${area('Descripción','description')}<label class="field">Contenido programático para el certificado (un tema por línea)<textarea name="program" maxlength="10000"></textarea></label><button class="primary">Crear borrador</button></div></form></details></section>${user.role==='admin'?`<section class="panel"><h2>Usuarios</h2><ul class="list">${users.map(u=>`<li>${safe(u.name)} · ${safe(u.email)} · ${{admin:'Administración',teacher:'Docente',student:'Estudiante'}[u.role]}</li>`).join('')}</ul><details><summary>Crear cuenta docente</summary><form class="stack" data-form="teacher"><div>${field('Nombre completo','name')}${field('Correo electrónico','email','email')}${field('Contraseña','password','password','required minlength="10" autocomplete="new-password"')}<button>Crear docente</button></div></form></details></section>`:''}</div>`);
+ return section(user.role==='admin'?'Administración':'Panel docente',`<div class="stack"><section class="panel"><h2>Gestionar cursos</h2><ul class="list">${courses.map(c=>`<li><a href="#curso/${c.id}">${safe(c.title)}</a> · ${c.published?'Publicado':'Borrador'}${c.teacher?' · '+safe(c.teacher):''}</li>`).join('')}</ul><details${courses.length?'':' open'}><summary>Crear curso</summary><form class="stack" data-form="createCourse"><div>${field('Título','title')}${field('Categoría','category')}${area('Descripción','description')}<label class="field">Contenido programático para el certificado (un tema por línea)<textarea name="program" maxlength="10000"></textarea></label><button class="primary">Crear borrador</button></div></form></details></section>${user.role==='admin'?`<section class="panel"><h2>Usuarios</h2><ul class="list">${users.map(u=>`<li>${safe(u.name)} · ${safe(u.email)} · ${{admin:'Administración',teacher:'Docente',student:'Estudiante'}[u.role]}</li>`).join('')}</ul>${promoteAccountForm(users)}<details><summary>Crear cuenta docente</summary><form class="stack" data-form="teacher"><div>${field('Nombre completo','name')}${field('Correo electrónico','email','email')}${field('Contraseña','password','password','required minlength="10" autocomplete="new-password"')}<button>Crear docente</button></div></form></details></section>`:''}</div>`);
 }
 function questionEditor(question={}) {
  const type=question.type ?? 'single';
@@ -382,6 +397,12 @@ root.addEventListener('submit',async event=>{
    user=await api(kind,data);location.hash=user.role==='student'?'aula':'panel';return;
   }
   if(kind==='teacher'){await api('staff',data);message('Cuenta docente creada.');}
+  if(kind==='promote'){
+   const account=form.elements.userId.selectedOptions[0]?.textContent;
+   if(!window.confirm('¿Dar acceso de administrador a '+account+'?'))return;
+   await api('staff/promote',{userId:Number(data.userId)});
+   message('La cuenta ahora tiene acceso de administrador.');
+  }
   if(kind==='createCourse'){const result=await api('courses',data);location.hash='curso/'+result.id;return;}
   if(kind==='cover'){
    const file=data.image;

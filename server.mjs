@@ -315,6 +315,17 @@ export const server=createServer(async(req,res)=>{
   if(method==='GET') return json({courses:user.role==='admin'?await all('SELECT c.*,u.name AS teacher FROM courses c JOIN users u ON u.id=c.owner'):await all('SELECT * FROM courses WHERE owner=?',user.id),users:user.role==='admin'?await all('SELECT id,name,email,role FROM users ORDER BY id'):[]});
   if(method==='POST'){auth(['admin']);const data=await body(req);return json({id:await addUser(data,'teacher')},201);}
  }
+ if(method==='POST'&&path==='/api/staff/promote'){
+  auth(['admin']);
+  const {userId}=await body(req);
+  if(!Number.isInteger(userId)||userId<1||userId>2147483647) fail(400,'Selecciona una cuenta válida.');
+  await database.transaction(async()=>{
+   const updated=await get("UPDATE users SET role='admin' WHERE id=? AND role IN ('student','teacher') RETURNING id",userId);
+   if(!updated) fail(409,'La cuenta ya es administradora o no está disponible.');
+   await run('DELETE FROM sessions WHERE uid=?',userId);
+  });
+  return json({});
+ }
  if(method==='POST'&&path==='/api/courses'){
   auth(['teacher','admin']);
   const data=await body(req),title=str(data.title,140),description=str(data.description,2000),category=str(data.category,80);
