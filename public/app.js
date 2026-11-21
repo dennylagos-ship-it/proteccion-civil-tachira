@@ -212,8 +212,12 @@ function lessonResourceEditor(courseId, lesson) {
 }
 
 function progressLabel(completed, activities) {
- return `<label class="course-progress">${completed} de ${activities} actividades completadas
-  <progress value="${completed}" max="${activities}"></progress></label>`;
+ const percent=Math.floor(completed*100/activities);
+ return `<div class="course-progress">
+  <div class="course-progress-heading"><strong>Avance del curso</strong><strong>${percent} %</strong></div>
+  <progress aria-label="Avance del curso" aria-valuetext="${percent} %, ${completed} de ${activities} actividades completadas" value="${completed}" max="${activities}"></progress>
+  <span class="muted">${completed} de ${activities} actividades completadas</span>
+ </div>`;
 }
 
 function courseOutline(course) {
