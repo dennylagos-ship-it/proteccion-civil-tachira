@@ -30,8 +30,21 @@ function coverImage(course){
  const source=course.has_cover?'/api/courses/'+Number(course.id)+'/cover':'/proteccion-civil.png';
  return `<img class="course-cover${course.has_cover?'':' course-cover-default'}" src="${source}" alt="" width="1200" height="675" loading="lazy">`;
 }
+function shareCourse(course){
+ const url=new URL('/curso/'+Number(course.id),location.origin).href;
+ const whatsapp='https://wa.me/?'+new URLSearchParams({text:course.title+' '+url});
+ const facebook='https://www.facebook.com/sharer/sharer.php?'+new URLSearchParams({u:url});
+ return `<details class="course-share">
+  <summary aria-label="Compartir ${safe(course.title)}">Compartir</summary>
+  <div class="course-share-links">
+   <a href="${safe(whatsapp)}" target="_blank" rel="noopener noreferrer">WhatsApp</a>
+   <a href="${safe(facebook)}" target="_blank" rel="noopener noreferrer">Facebook</a>
+   <button type="button" data-action="copy-course-link" data-id="${Number(course.id)}">Copiar enlace</button>
+  </div>
+ </details>`;
+}
 function cards(courses){
- return courses.length?`<div class="grid">${courses.map(c=>`<article class="card course-card">${coverImage(c)}<span class="category">${safe(c.category)}</span><h3>${safe(c.title)}</h3><p class="muted">${safe(c.description)}</p>${Number(c.activities)>0?progressLabel(Number(c.completed),Number(c.activities)):''}${button(c.activities!==undefined?'Continuar curso':'Ver curso','#curso/'+c.id)}</article>`).join('')}</div>`:'<p class="muted">Aquí aparecerán los cursos disponibles.</p>';
+ return courses.length?`<div class="grid">${courses.map(c=>`<article class="card course-card">${coverImage(c)}<span class="category">${safe(c.category)}</span><h3>${safe(c.title)}</h3><p class="muted">${safe(c.description)}</p>${Number(c.activities)>0?progressLabel(Number(c.completed),Number(c.activities)):''}${button(c.activities!==undefined?'Continuar curso':'Ver curso','#curso/'+c.id)}${c.activities===undefined?shareCourse(c):''}</article>`).join('')}</div>`:'<p class="muted">Aquí aparecerán los cursos disponibles.</p>';
 }
 async function home(){
  const courses=await api('catalog').catch(()=>null);
@@ -243,7 +256,7 @@ async function verify(code){
 }
 async function render(){
  const current=++revision;
- const route=location.hash.slice(1), code=new URLSearchParams(location.search).get('verify');
+ const route=location.hash.slice(1)||(/^\/curso\/[1-9]\d{0,9}$/.test(location.pathname)?location.pathname.slice(1):''), code=new URLSearchParams(location.search).get('verify');
  navigation();
  try{
   let html;
@@ -285,6 +298,12 @@ document.addEventListener('click',async event=>{
    const activity=document.getElementById(id);
    activity?.focus({preventScroll:true});
    activity?.scrollIntoView({block:'start'});
+   return;
+  }
+  if(action==='copy-course-link'){
+   const url=new URL('/curso/'+id,location.origin).href;
+   try{await navigator.clipboard.writeText(url);message('Enlace del curso copiado.');}
+   catch{window.prompt('Copia el enlace del curso',url);}
    return;
   }
   if(action==='share-certificate'){

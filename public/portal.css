@@ -148,3 +148,27 @@ fondo-operativos { display: contents; }
  border-radius: 10px;
 }
 .course-cover-editor form { max-width: 420px; }
+
+.course-share {
+ margin-top: 10px;
+ width: 100%;
+}
+.course-share summary {
+ cursor: pointer;
+ width: fit-content;
+ font-weight: 700;
+}
+.course-share-links {
+ display: flex;
+ flex-wrap: wrap;
+ gap: 8px 14px;
+ align-items: center;
+ padding-top: 10px;
+}
+.course-share-links button {
+ border: 0;
+ padding: 0;
+ background: transparent;
+ color: inherit;
+ text-decoration: underline;
+}

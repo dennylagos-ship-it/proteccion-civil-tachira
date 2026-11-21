@@ -67,6 +67,23 @@ async function certificateProgram(course) {
 }
 const hash=(password,salt=randomBytes(16).toString('hex'))=>salt+':'+scryptSync(password,salt,64).toString('hex');
 const fail=(status,message)=>{throw Object.assign(new Error(message),{status});};
+const escapeHtml=value=>String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+function courseMetadata(course, origin) {
+ const url=origin+'/curso/'+course.id;
+ const image=origin+(course.has_cover?'/api/courses/'+course.id+'/cover':'/proteccion-civil.png');
+ const openGraph={
+  'og:type':'website',
+  'og:site_name':'Protección Civil Táchira',
+  'og:title':course.title,
+  'og:description':course.description,
+  'og:url':url,
+  'og:image':image,
+  'og:locale':'es_VE'
+ };
+ return '<link rel="canonical" href="'+escapeHtml(url)+'">'+
+  Object.entries(openGraph).map(([key,value])=>'<meta property="'+key+'" content="'+escapeHtml(value)+'">').join('')+
+  '<meta name="twitter:card" content="summary_large_image">';
+}
 function coverBytes(value) {
  if(typeof value!=='string'||!value.length||value.length>1_398_104||value.length%4!==0||/[^A-Za-z0-9+/=]/.test(value)) fail(400,'Selecciona una imagen válida de hasta 1 MB.');
  const bytes=Buffer.from(value,'base64');
@@ -213,6 +230,10 @@ function expiry(date){
  end.setUTCDate(day);
  if(end.getUTCMonth()!==month) end.setUTCDate(0);
  return end.toISOString();
+}
+function withPortalLayout(html) {
+ return html.replace('<!-- portal-header -->',()=>readFileSync(new URL('encabezado.html',publicAssets),'utf8'))
+  .replace('<!-- portal-footer -->',()=>readFileSync(new URL('pie.html',publicAssets),'utf8'));
 }
 export const server=createServer(async(req,res)=>{
  try{
@@ -437,6 +458,20 @@ export const server=createServer(async(req,res)=>{
   }
   return json({...cert,program:await certificateProgram(course),valid:Date.now()<Date.parse(cert.expires)});
  }
+ const sharedCourseMatch=path.match(/^\/curso\/([1-9]\d{0,9})$/);
+ if((method==='GET'||method==='HEAD')&&sharedCourseMatch){
+  const id=Number(sharedCourseMatch[1]);
+  if(id>2147483647) fail(404,'Curso no disponible.');
+  const course=await get('SELECT id,title,description,EXISTS(SELECT 1 FROM course_covers WHERE course=courses.id) AS has_cover FROM courses WHERE id=? AND published=1',id);
+  if(!course) fail(404,'Curso no disponible.');
+  const origin=publicOrigin||'http://localhost:'+port;
+  const shell=readFileSync(new URL('index.html',publicAssets),'utf8')
+   .replace(/<title>.*?<\/title>/,()=>'<title>'+escapeHtml(course.title)+' | Protección Civil Táchira</title>')
+   .replace(/<meta name="description" content="[^"]*">/,()=>'<meta name="description" content="'+escapeHtml(course.description)+'">')
+   .replace('</head>',()=>courseMetadata(course,origin)+'</head>');
+  res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
+  return res.end(method==='HEAD'?undefined:withPortalLayout(shell));
+ }
  if(method==='GET'&&(['/','/styles.css','/portal.css','/app.js','/lesson-media.js','/tema.js','/institucion.html','/historia.html','/institucion.css','/proteccion-civil.png','/proteccion-civil-tachira.png','/defensa-civil-tachira.png','/defensa-civil-tachira.gif','/sima-tachira.jpg','/yesnardo-canal-campo.png'].includes(path)||/^\/operativos\/(?:0[1-9]|1[0-2])\.png$/.test(path))){
   const file=path==='/'?'index.html':path.slice(1);
   const contentType={
@@ -448,11 +483,7 @@ export const server=createServer(async(req,res)=>{
    '.jpg':'image/jpeg',
   }[file.slice(file.lastIndexOf('.'))];
   const source=readFileSync(new URL(file,publicAssets));
-  const content=file.endsWith('.html')
-   ? source.toString('utf8')
-    .replace('<!-- portal-header -->',()=>readFileSync(new URL('encabezado.html',publicAssets),'utf8'))
-    .replace('<!-- portal-footer -->',()=>readFileSync(new URL('pie.html',publicAssets),'utf8'))
-   : source;
+  const content=file.endsWith('.html')?withPortalLayout(source.toString('utf8')):source;
   res.writeHead(200,{'Content-Type':contentType});
   return res.end(content);
  }
