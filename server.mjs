@@ -1,7 +1,7 @@
 import {createServer} from 'node:http';
 import {DatabaseSync} from 'node:sqlite';
 import {randomBytes, scryptSync, timingSafeEqual} from 'node:crypto';
-import {mkdirSync, readFileSync} from 'node:fs';
+import {existsSync, mkdirSync, readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {buffer} from 'node:stream/consumers';
@@ -11,6 +11,12 @@ import PDFDocument from 'pdfkit';
 import {demoCourses} from './demo-courses.mjs';
 import {renderCertificatePdf} from './certificate-pdf.mjs';
 import {videoEmbed} from './public/lesson-media.js';
+
+// Netlify bundles this module into netlify/server/index.mjs, but keeps public at the project root.
+const sourceAssets = new URL('./public/', import.meta.url);
+const publicAssets = existsSync(new URL('index.html', sourceAssets))
+  ? sourceAssets
+  : new URL('../../public/', import.meta.url);
 
 function connectSqlite() {
 const dataDirectory=process.env.DATA_DIR||'data';
@@ -320,7 +326,7 @@ export const server=createServer(async(req,res)=>{
    if(verify[2]==='qr'){
     res.writeHead(200,{'Content-Type':'image/png'});return res.end(png);
    }
-   const emblem=readFileSync(new URL('public/proteccion-civil.png',import.meta.url));
+   const emblem=readFileSync(new URL('proteccion-civil.png',publicAssets));
    const pdf=await renderCertificatePdf({...cert,program:await certificateProgram(course)},png,emblem);
    res.writeHead(200,{'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="certificado-${cert.code}.pdf"`});
    return res.end(pdf);
@@ -337,11 +343,11 @@ export const server=createServer(async(req,res)=>{
    '.gif':'image/gif',
    '.jpg':'image/jpeg',
   }[file.slice(file.lastIndexOf('.'))];
-  const source=readFileSync(new URL('public/'+file,import.meta.url));
+  const source=readFileSync(new URL(file,publicAssets));
   const content=file.endsWith('.html')
    ? source.toString('utf8')
-    .replace('<!-- portal-header -->',()=>readFileSync(new URL('public/encabezado.html',import.meta.url),'utf8'))
-    .replace('<!-- portal-footer -->',()=>readFileSync(new URL('public/pie.html',import.meta.url),'utf8'))
+    .replace('<!-- portal-header -->',()=>readFileSync(new URL('encabezado.html',publicAssets),'utf8'))
+    .replace('<!-- portal-footer -->',()=>readFileSync(new URL('pie.html',publicAssets),'utf8'))
    : source;
   res.writeHead(200,{'Content-Type':contentType});
   return res.end(content);
