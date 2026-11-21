@@ -20,8 +20,14 @@ export async function connectPostgres(connectionString) {
     if (existing) return existing.query(statement, args);
     const client = await pool.connect();
     try {
-      await client.query('SET search_path TO aula_privada, pg_catalog');
-      return await client.query(statement, args);
+      await client.query('BEGIN');
+      await client.query('SET LOCAL search_path TO aula_privada, pg_catalog');
+      const result = await client.query(statement, args);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
     } finally {
       client.release();
     }

@@ -1,3 +1,5 @@
+import {videoEmbed} from './lesson-media.js';
+
 const root=document.querySelector('#main');
 const nav=document.querySelector('#nav');
 const notice=document.querySelector('#notice');
@@ -25,7 +27,7 @@ function navigation(){
   : '<a class="portal-action portal-primary" href="#ingresar">Aula virtual</a>';
 }
 function cards(courses){
- return courses.length?`<div class="grid">${courses.map(c=>`<article class="card"><span class="icon" aria-hidden="true">▤</span><span class="category">${safe(c.category)}</span><h3>${safe(c.title)}</h3><p class="muted">${safe(c.description)}</p>${button('Ver curso','#curso/'+c.id)}</article>`).join('')}</div>`:'<p class="muted">Aquí aparecerán los cursos disponibles.</p>';
+ return courses.length?`<div class="grid">${courses.map(c=>`<article class="card"><span class="icon" aria-hidden="true">▤</span><span class="category">${safe(c.category)}</span><h3>${safe(c.title)}</h3><p class="muted">${safe(c.description)}</p>${Number(c.activities)>0?progressLabel(Number(c.completed),Number(c.activities)):''}${button(c.activities!==undefined?'Continuar curso':'Ver curso','#curso/'+c.id)}</article>`).join('')}</div>`:'<p class="muted">Aquí aparecerán los cursos disponibles.</p>';
 }
 async function home(){
  const courses=await api('catalog').catch(()=>null);
@@ -101,15 +103,33 @@ async function panel(){
  const {courses,users}=await api('staff');
  return section(user.role==='admin'?'Administración':'Panel docente',`<div class="stack"><section class="panel"><h2>Gestionar cursos</h2><ul class="list">${courses.map(c=>`<li><a href="#curso/${c.id}">${safe(c.title)}</a> · ${c.published?'Publicado':'Borrador'}${c.teacher?' · '+safe(c.teacher):''}</li>`).join('')}</ul><details${courses.length?'':' open'}><summary>Crear curso</summary><form class="stack" data-form="createCourse"><div>${field('Título','title')}${field('Categoría','category')}${area('Descripción','description')}<label class="field">Contenido programático para el certificado (un tema por línea)<textarea name="program" maxlength="10000"></textarea></label><button class="primary">Crear borrador</button></div></form></details></section>${user.role==='admin'?`<section class="panel"><h2>Usuarios</h2><ul class="list">${users.map(u=>`<li>${safe(u.name)} · ${safe(u.email)} · ${{admin:'Administración',teacher:'Docente',student:'Estudiante'}[u.role]}</li>`).join('')}</ul><details><summary>Crear cuenta docente</summary><form class="stack" data-form="teacher"><div>${field('Nombre completo','name')}${field('Correo electrónico','email','email')}${field('Contraseña','password','password','required minlength="10" autocomplete="new-password"')}<button>Crear docente</button></div></form></details></section>`:''}</div>`);
 }
-function questionEditor(){
- return `<fieldset class="question"><legend>Pregunta</legend><label class="field">Tipo<select name="type">${Object.entries(types).map(([key,label])=>`<option value="${key}">${label}</option>`).join('')}</select></label>${field('Enunciado','prompt')}<div data-options></div><button type="button" class="secondary" data-action="removeQuestion">Quitar pregunta</button></fieldset>`;
+function questionEditor(question={}) {
+ const type=question.type ?? 'single';
+ return `<fieldset class="question"><legend>Pregunta</legend>
+  <label class="field">Tipo<select name="type">${Object.entries(types).map(([key,label])=>`<option value="${key}"${key===type?' selected':''}>${label}</option>`).join('')}</select></label>
+  ${field('Enunciado','prompt','text',`required value="${safe(question.prompt)}"`)}
+  ${field('Puntos','points','number',`required min="1" max="100" step="1" value="${question.points??1}"`)}
+  <div data-options>${editorFields(type,question)}</div>
+  <button type="button" class="secondary" data-action="removeQuestion">Quitar pregunta</button>
+ </fieldset>`;
 }
-function editorFields(type){
- if(type==='boolean')return '<label class="field">Respuesta correcta<select name="correct"><option value="1">Verdadero</option><option value="2">Falso</option></select></label>';
- if(type==='numeric')return field('Respuesta correcta','correct','number','required step="any"');
- if(type==='text')return area('Respuestas aceptadas, una por línea','correct');
+function editorFields(type, question={}) {
+ const {answer, options=[]}=question;
+ if(type==='boolean') return `<label class="field">Respuesta correcta<select name="correct"><option value="1">Verdadero</option><option value="2"${answer?.[0]===1?' selected':''}>Falso</option></select></label>`;
+ if(type==='numeric') return field('Respuesta correcta','correct','number',`required step="any" value="${safe(answer)}"`);
+ if(type==='text') return `<label class="field">Respuestas aceptadas, una por línea<textarea name="correct" required>${safe((answer??[]).join('\n'))}</textarea></label>`;
  const labels={single:'Número de la opción correcta',multiple:'Números de las opciones correctas separados por comas',ordering:'Números de todas las opciones en orden correcto, separados por comas'};
- return area('Opciones, una por línea','options')+field(labels[type],'correct');
+ return `<label class="field">Opciones, una por línea<textarea name="options" required>${safe(options.join('\n'))}</textarea></label>`
+  +field(labels[type],'correct','text',`required value="${(answer??[]).map(i=>i+1).join(', ')}"`);
+}
+function quizEditor(courseId, quiz) {
+ return `<details><summary>${quiz?'Editar evaluación':'Crear evaluación'}</summary>
+  <form class="stack" data-form="quiz" data-course="${courseId}" data-quiz="${quiz?.id??''}">
+   ${field('Título de la evaluación','title','text',`required value="${safe(quiz?.title)}"`)}
+   ${field('Porcentaje mínimo de aprobación','passingScore','number',`required min="1" max="100" step="1" value="${quiz?.passing_score??70}"`)}
+   <div data-questions>${quiz?quiz.questions.map(questionEditor).join(''):questionEditor()}</div>
+   <div class="actions"><button type="button" class="secondary" data-action="addQuestion">Agregar pregunta</button><button>Guardar evaluación</button></div>
+  </form></details>`;
 }
 function quizInputs(q,i){
  const name='q'+i;
@@ -117,18 +137,76 @@ function quizInputs(q,i){
  if(q.type==='ordering')return q.options.map((option,j)=>`<label class="field">${safe(option)}<select name="${name}" data-position="${j}" required><option value="">Selecciona su posición</option>${q.options.map((_,k)=>`<option value="${k}">${k+1}</option>`).join('')}</select></label>`).join('');
  return q.options.map((option,j)=>`<label class="choice"><input type="${q.type==='multiple'?'checkbox':'radio'}" name="${name}" value="${j}" ${q.type==='multiple'?'':'required'}> ${safe(option)}</label>`).join('');
 }
+function lessonMaterials(courseId, lesson) {
+ const embed = videoEmbed(lesson.video_url);
+ const file = '/api/courses/' + courseId + '/file/' + lesson.id;
+ const pdf = /\.pdf$/i.test(lesson.file || '');
+ const video = embed ? `<section class="lesson-resource">
+  <h3>Video de la lección</h3>
+  <iframe class="lesson-video" loading="lazy" src="${safe(embed)}" title="Video · ${safe(lesson.title)}" referrerpolicy="strict-origin-when-cross-origin" allow="fullscreen; picture-in-picture" allowfullscreen></iframe>
+  <a href="${safe(lesson.video_url)}" target="_blank" rel="noopener noreferrer">Abrir video en su plataforma</a>
+ </section>` : '';
+ const document = lesson.file ? `<section class="lesson-resource">
+  <h3>Material de estudio</h3>
+  ${pdf ? `<iframe class="lesson-pdf" loading="lazy" src="${file}?preview=1" title="PDF · ${safe(lesson.file)}"></iframe>
+  <a href="${file}?preview=1" target="_blank" rel="noopener">Abrir PDF en otra pestaña</a>` : ''}
+  <a href="${file}" download>Descargar ${safe(lesson.file)}</a>
+ </section>` : '';
+ return video + document;
+}
+
+function lessonResourceEditor(courseId, lesson) {
+ return `<details class="lesson-resource-editor"><summary>Editar materiales</summary>
+  <form class="stack" data-form="lesson" data-course="${courseId}" data-lesson="${lesson.id}">
+   ${field('Subir o reemplazar archivo (hasta 8 MB)','file','file','')}
+   ${field('Enlace de YouTube o Vimeo','videoUrl','url',`value="${safe(lesson.video_url)}"`)}
+   <button>Guardar materiales</button>
+  </form>
+ </details>`;
+}
+
+function progressLabel(completed, activities) {
+ return `<label class="course-progress">${completed} de ${activities} actividades completadas
+  <progress value="${completed}" max="${activities}"></progress></label>`;
+}
+
+function courseOutline(course) {
+ if (!course.lessons.length) return '';
+ const activities = course.lessons.length + course.quizzes.length;
+ const completed = course.lessons.filter(lesson => lesson.done).length
+  + course.quizzes.filter(quiz => quiz.passed).length;
+ return `<aside class="panel course-outline" aria-label="Contenido del curso">
+  <h2>Contenido del curso</h2>
+  ${course.enrolled ? progressLabel(completed,activities) : ''}
+  <ol class="course-steps">
+   ${course.lessons.map(lesson => `<li><button type="button" data-action="jump" data-id="lesson-${lesson.id}">${safe(lesson.title)}</button>${lesson.done ? '<span>Completada</span>' : ''}</li>`).join('')}
+   ${course.quizzes.map((quiz,index) => `<li><button type="button" data-action="jump" data-id="quiz-${quiz.id}">${safe(quiz.title || ("Evaluación "+(index+1)))}</button>${quiz.passed ? '<span>Aprobada</span>' : ''}</li>`).join('')}
+  </ol>
+ </aside>`;
+}
+
+function courseReport(course) {
+ if (!course.staff) return '';
+ return `<details class="panel course-report">
+  <summary>Seguimiento de estudiantes (${course.learners.length})</summary>
+  ${course.learners.length ? `<ul class="list">${course.learners.map(learner=>`<li>
+   <strong>${safe(learner.name)}</strong> · ${Number(learner.lessons)}/${course.lessons.length} clases · ${Number(learner.quizzes)}/${course.quizzes.length} evaluaciones aprobadas
+  </li>`).join('')}</ul>` : '<p class="muted">Aún no hay estudiantes inscritos.</p>'}
+ </details>`;
+}
+
 async function course(id){
  const c=await api('courses/'+id);
- const editor=c.staff&&!c.published?`<section class="panel"><h2>Preparar el curso</h2><details><summary>Subir clase</summary><form class="stack" data-form="lesson" data-course="${id}"><div>${field('Título','title')}${area('Contenido','content','')}${field('Material descargable (hasta 8 MB)','file','file','')}<button>Guardar clase</button></div></form></details><details><summary>Crear evaluación</summary><form class="stack" data-form="quiz" data-course="${id}"><div data-questions>${questionEditor()}</div><div class="actions"><button type="button" class="secondary" data-action="addQuestion">Agregar pregunta</button><button>Guardar evaluación</button></div></form></details><p><button class="primary" data-action="publish" data-course="${id}">Publicar curso</button></p></section>`:'';
+ const editor=c.staff&&!c.published?`<section class="panel"><h2>Preparar el curso</h2><details><summary>Subir clase</summary><form class="stack" data-form="lesson" data-course="${id}"><div>${field('Título','title')}${area('Contenido','content','')}${field('Material de estudio (PDF u otro archivo, hasta 8 MB)','file','file','')}${field('Enlace de YouTube o Vimeo','videoUrl','url','placeholder="https://…"')}<button>Guardar clase</button></div></form></details>${quizEditor(id)}<p><button class="primary" data-action="publish" data-course="${id}">Publicar curso</button></p></section>`:'';
  const ready=c.lessons.length&&c.quizzes.length&&c.lessons.every(l=>l.done)&&c.quizzes.every(q=>q.passed);
- return section(safe(c.title),`<div class="category">${safe(c.category)}</div><p>${safe(c.description)}</p>${!c.enrolled&&!c.staff?(user?'<button class="primary" data-action="enroll" data-course="'+id+'">Inscribirme</button>':button('Inicia sesión para inscribirte','#ingresar','primary')):''}<div class="stack">${editor}${c.lessons.map(l=>`<article class="panel"><h2>${safe(l.title)}</h2><p class="lesson-text">${safe(l.content)}</p>${l.file?`<p><a href="/api/courses/${id}/file/${l.id}">Descargar ${safe(l.file)}</a></p>`:''}${c.enrolled?(l.done?'<span class="tag">Clase completada</span>':`<button data-action="complete" data-course="${id}" data-id="${l.id}">Marcar como completada</button>`):''}</article>`).join('')}${c.quizzes.map((q,i)=>`<article class="panel"><h2>Evaluación ${i+1}</h2>${q.passed?'<p class="tag">Evaluación aprobada</p>':''}${c.enrolled?`<form data-form="submit" data-course="${id}" data-id="${q.id}" data-types="${q.questions.map(x=>x.type).join(',')}">${q.questions.map((x,j)=>`<fieldset class="question"><legend>${safe(x.prompt)}</legend><p class="muted">${types[x.type]}</p>${quizInputs(x,j)}</fieldset>`).join('')}<button>Enviar respuestas</button></form>`:`<ul class="list">${q.questions.map(x=>`<li>${safe(x.prompt)} · ${types[x.type]}</li>`).join('')}</ul>`}</article>`).join('')}${c.enrolled?`<section class="panel"><h2>Certificado</h2>${ready?`<button class="primary" data-action="certificate" data-course="${id}">Obtener certificado</button>`:'<p>Completa todas las clases y aprueba las evaluaciones para obtener tu certificado.</p>'}</section>`:''}</div>`);
+ return section(safe(c.title),`<div class="category">${safe(c.category)}</div><p>${safe(c.description)}</p>${!c.enrolled&&!c.staff?(user?'<button class="primary" data-action="enroll" data-course="'+id+'">Inscribirme</button>':button('Inicia sesión para inscribirte','#ingresar','primary')):''}${editor}${courseReport(c)}<div class="course-layout">${courseOutline(c)}<div class="stack course-activities">${c.lessons.map(l=>`<article class="panel" id="lesson-${l.id}" tabindex="-1"><h2>${safe(l.title)}</h2><p class="lesson-text">${safe(l.content)}</p>${lessonMaterials(id,l)}${c.staff?lessonResourceEditor(id,l):''}${c.enrolled?(l.done?'<span class="tag">Clase completada</span>':`<button data-action="complete" data-course="${id}" data-id="${l.id}">Marcar como completada</button>`):''}</article>`).join('')}${c.quizzes.map((q,i)=>`<article class="panel" id="quiz-${q.id}" tabindex="-1"><h2>${safe(q.title || ("Evaluación "+(i+1)))}</h2><p class="muted">Aprobación mínima: ${Number(q.passing_score)} %</p>${c.staff&&!c.published?quizEditor(id,q):''}${q.passed?'<p class="tag">Evaluación aprobada</p>':''}${c.enrolled?`<form data-form="submit" data-course="${id}" data-id="${q.id}" data-types="${q.questions.map(x=>x.type).join(',')}">${q.questions.map((x,j)=>`<fieldset class="question"><legend>${safe(x.prompt)}</legend><p class="muted">${types[x.type]} · ${x.points ?? 1} puntos</p>${quizInputs(x,j)}</fieldset>`).join('')}<button>Enviar respuestas</button></form>`:`<ul class="list">${q.questions.map(x=>`<li>${safe(x.prompt)} · ${types[x.type]}</li>`).join('')}</ul>`}</article>`).join('')}${c.enrolled?`<section class="panel"><h2>Certificado</h2>${ready?`<button class="primary" data-action="certificate" data-course="${id}">Obtener certificado</button>`:'<p>Completa todas las clases y aprueba las evaluaciones para obtener tu certificado.</p>'}</section>`:''}</div></div>`);
 }
 async function verify(code){
  let result='';
  if(code){
   try{
    const c=await api('verify/'+encodeURIComponent(code.toLowerCase()));
-   result=`<section class="panel certificate stack"><h2>Certificado de aprobación</h2><div>Protección Civil Táchira</div><h3>${safe(c.name)}</h3><strong>${safe(c.title)}</strong><div class="${c.valid?'tag':'expired'}">${c.valid?'Vigente':'Vencido'}</div><div>Emitido el ${dateFmt.format(new Date(c.issued))}<br>Vence el ${dateFmt.format(new Date(c.expires))}</div><img src="/api/verify/${c.code}/qr" alt="Código QR para verificar el certificado"><code>${c.code}</code><div class="actions no-print"><a class="btn primary" href="/api/verify/${c.code}/pdf" download>Descargar PDF</a><button data-action="share-certificate" data-id="${c.code}">Compartir enlace</button><button data-action="print">Imprimir</button></div></section><section class="panel certificate-program stack"><h2>Contenido programático</h2>${c.program.summary?'<p>'+safe(c.program.summary)+'</p>':''}${c.program.topics.length?'<ol class="list">'+c.program.topics.map(topic=>'<li>'+safe(topic)+'</li>').join('')+'</ol>':'<p class="muted">Temario no disponible en el registro del curso.</p>'}</section>`;
+   result=`<section class="panel certificate"><img class="certificate-emblem" src="/proteccion-civil.png" alt="Escudo de Protección Civil"><p class="certificate-institution">Protección Civil Táchira</p><h2>Certificado de aprobación</h2><p>Se otorga el presente certificado a</p><h3>${safe(c.name)}</h3><p>Por haber aprobado el curso</p><strong class="certificate-course">${safe(c.title)}</strong><div class="certificate-meta"><div><span>Emisión</span><strong>${dateFmt.format(new Date(c.issued))}</strong></div><div><span>Vigencia hasta</span><strong>${dateFmt.format(new Date(c.expires))}</strong><span class="${c.valid?'tag':'expired'}">${c.valid?'Vigente':'Vencido'}</span></div><div><span>Verificación</span><code>${c.code}</code></div><img class="certificate-qr" src="/api/verify/${c.code}/qr" alt="Código QR para verificar el certificado"></div></section><div class="actions certificate-actions no-print"><a class="btn primary" href="/api/verify/${c.code}/pdf" download>Descargar PDF</a><button data-action="share-certificate" data-id="${c.code}">Compartir enlace</button><button data-action="print">Imprimir</button></div><section class="panel certificate-program stack"><h2>Contenido programático</h2><strong>${safe(c.title)}</strong>${c.program.summary?'<p>'+safe(c.program.summary)+'</p>':''}${c.program.topics.length?'<ol class="list">'+c.program.topics.map(topic=>'<li>'+safe(topic)+'</li>').join('')+'</ol>':'<p class="muted">Temario no disponible en el registro del curso.</p>'}</section>`;
   }catch(error){result=`<p class="panel expired" role="alert">${safe(error.message)}</p>`;}
  }
  return section('Verificar certificado',`<div class="narrow"><form class="panel no-print" data-form="verify">${field('Código del certificado','code','text',`required pattern="[0-9a-fA-F]{32}" maxlength="32" value="${safe(code)}"`)}<button class="primary">Consultar certificado</button></form>${result}</div>`);
@@ -150,7 +228,6 @@ async function render(){
   if(current!==revision)return;
   root.innerHTML=html;
   if(route==='contacto') document.getElementById('contacto')?.scrollIntoView();
-  root.querySelectorAll('[data-options]').forEach(e=>e.innerHTML=editorFields('single'));
  }catch(error){if(current===revision)root.innerHTML=section('Página no disponible',`<p role="alert">${safe(error.message)}</p>`);}
 }
 const lines=value=>value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
@@ -171,6 +248,12 @@ document.addEventListener('click',async event=>{
  const {action,course,id}=control.dataset;
  try{
   if(action==='print'){window.print();return;}
+  if(action==='jump'){
+   const activity=document.getElementById(id);
+   activity?.focus({preventScroll:true});
+   activity?.scrollIntoView({block:'start'});
+   return;
+  }
   if(action==='share-certificate'){
    const url=new URL('/?verify='+id,location.origin).href;
    if(navigator.share){
@@ -185,14 +268,14 @@ document.addEventListener('click',async event=>{
    const container=control.form.querySelector('[data-questions]');
    if(container.children.length>=50)throw Error('La evaluación admite hasta 50 preguntas.');
    container.insertAdjacentHTML('beforeend',questionEditor());
-   container.lastElementChild.querySelector('[data-options]').innerHTML=editorFields('single');return;
+   return;
   }
   if(action==='removeQuestion'){
    const question=control.closest('fieldset');
    if(question.parentElement.children.length<=1)throw Error('La evaluación necesita al menos una pregunta.');
    question.remove();return;
   }
-  if(action==='publish'&&!confirm('¿Publicar el curso? Después de publicarlo se cerrará su contenido.'))return;
+  if(action==='publish'&&!confirm('¿Publicar el curso? Podrás actualizar los materiales de las clases publicadas.'))return;
   control.disabled=true;
   if(action==='logout'){await api('logout',{});user=null;location.hash='inicio';await render();return;}
   const data=await api('courses/'+course+'/'+action+(id?'/'+id:''),{});
@@ -216,17 +299,19 @@ root.addEventListener('submit',async event=>{
   if(kind==='lesson'){
    const file=data.file;
    if(file.size>8*1024*1024)throw Error('El archivo excede 8 MB.');
-   await api('courses/'+id+'/lessons',{title:data.title,content:data.content,file:file.name,bytes:file.size?await encodeFile(file):null});
-   message('Clase guardada.');
+   const lesson=form.dataset.lesson;
+   await api('courses/'+id+'/lessons'+(lesson?'/'+lesson:''),{title:data.title,content:data.content,videoUrl:data.videoUrl,file:file.name,bytes:file.size?await encodeFile(file):null});
+   message(lesson?'Materiales guardados.':'Clase guardada.');
   }
   if(kind==='quiz'){
    const questions=Array.from(form.querySelectorAll('fieldset'),node=>{
     const value=name=>node.querySelector('[name="'+name+'"]')?.value;
     const type=value('type'), correct=value('correct');
     const answer=type==='text'?lines(correct):type==='numeric'?Number(correct):correct.split(',').map(index=>Number(index.trim())-1);
-    return {type,prompt:value('prompt'),options:value('options')?lines(value('options')):[],answer};
+    return {type,prompt:value('prompt'),options:value('options')?lines(value('options')):[],answer,points:Number(value('points'))};
    });
-   await api('courses/'+id+'/quizzes',{questions});message('Evaluación guardada.');
+   const quiz=form.dataset.quiz;
+   await api('courses/'+id+'/quizzes'+(quiz?'/'+quiz:''),{questions,title:data.title,passingScore:Number(data.passingScore)});message('Evaluación guardada.');
   }
   if(kind==='submit'){
    const answers=form.dataset.types.split(',').map((type,i)=>{
@@ -239,7 +324,7 @@ root.addEventListener('submit',async event=>{
     return values.map((_,position)=>values.indexOf(position));
    });
    const result=await api('courses/'+id+'/submit/'+form.dataset.id,{answers});
-   message(`Resultado: ${result.score} %. ${result.passed?'Aprobaste.':'Necesitas al menos 70 %. Puedes volver a intentarlo.'}`);
+   message(`Resultado: ${result.score} %. ${result.passed?'Aprobaste.':`Necesitas al menos ${result.passingScore} %. Puedes volver a intentarlo.`}`);
   }
   await render();
  }catch(error){message(error.message);}finally{if(submitter)submitter.disabled=false;}

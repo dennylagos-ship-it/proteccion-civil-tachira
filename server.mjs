@@ -4,10 +4,13 @@ import {randomBytes, scryptSync, timingSafeEqual} from 'node:crypto';
 import {mkdirSync, readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {buffer} from 'node:stream/consumers';
 import {connectPostgres} from './database.mjs';
 import QRCode from 'qrcode';
+import PDFDocument from 'pdfkit';
 import {demoCourses} from './demo-courses.mjs';
 import {renderCertificatePdf} from './certificate-pdf.mjs';
+import {videoEmbed} from './public/lesson-media.js';
 
 function connectSqlite() {
 const dataDirectory=process.env.DATA_DIR||'data';
@@ -32,6 +35,12 @@ const run=(sql,...args)=>db.prepare(sql).run(...args);
 if (!all('PRAGMA table_info(courses)').some(column => column.name === 'program')) {
  db.exec("ALTER TABLE courses ADD COLUMN program TEXT NOT NULL DEFAULT ''");
 }
+if (!all('PRAGMA table_info(lessons)').some(column => column.name === 'video_url')) {
+ db.exec("ALTER TABLE lessons ADD COLUMN video_url TEXT NOT NULL DEFAULT ''");
+}
+const quizColumns=all('PRAGMA table_info(quizzes)').map(column=>column.name);
+if(!quizColumns.includes('title')) db.exec("ALTER TABLE quizzes ADD COLUMN title TEXT NOT NULL DEFAULT ''");
+if(!quizColumns.includes('passing_score')) db.exec('ALTER TABLE quizzes ADD COLUMN passing_score INTEGER NOT NULL DEFAULT 70 CHECK(passing_score BETWEEN 1 AND 100)');
 return {get, all, run, async transaction(action) {
  db.exec('BEGIN IMMEDIATE');
  try { const result=await action(); db.exec('COMMIT'); return result; }
@@ -75,6 +84,8 @@ function checkQuestions(questions){
  if(!Array.isArray(questions)||questions.length<1||questions.length>50) fail(400,'Incluye de 1 a 50 preguntas.');
  return questions.map(q=>{
   if(!q || !types.includes(q.type)||!str(q.prompt)) fail(400,'Completa el enunciado y tipo de cada pregunta.');
+  const points=q.points===undefined?1:Number(q.points);
+  if(!Number.isInteger(points)||points<1||points>100) fail(400,'Asigna de 1 a 100 puntos por pregunta.');
   const options=q.type==='boolean'?['Verdadero','Falso']:Array.isArray(q.options)?q.options.map(o=>str(o,300)):[];
   let answer=q.answer;
   if(q.type==='text'){
@@ -86,9 +97,20 @@ function checkQuestions(questions){
    const limit=options.length;
    if(limit<2||limit>20||options.some(o=>!o)||new Set(options).size!==limit||!Array.isArray(answer)||!answer.length||new Set(answer).size!==answer.length||answer.some(i=>!Number.isInteger(i)||i<0||i>=limit)||(q.type==='ordering'&&answer.length!==limit)||(['single','boolean'].includes(q.type)&&answer.length!==1)) fail(400,'Revisa las opciones y los índices de las respuestas.');
   }
-  return {type:q.type,prompt:str(q.prompt),options,answer};
+  return {type:q.type,prompt:str(q.prompt),options,answer,points};
  });
 }
+function demoWorksheet(course) {
+ const pdf=new PDFDocument({size:'A4',margin:54,info:{Title:course.title,Author:'Protección Civil Táchira'}});
+ const result=buffer(pdf);
+ pdf.fillColor('#122345').font('Helvetica-Bold').fontSize(12).text('Protección Civil Táchira · Aula virtual');
+ pdf.moveDown().fontSize(22).text(course.title);
+ pdf.moveDown().fontSize(15).text('Actividad práctica');
+ pdf.moveDown().font('Helvetica').fontSize(12).text(course.activity,{lineGap:4});
+ pdf.end();
+ return result;
+}
+
 if(process.env.SEED_DEMO==='1') {
  const owner=await get("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1");
  if(!owner) throw new Error('SEED_DEMO requiere una cuenta administradora.');
@@ -100,8 +122,9 @@ if(process.env.SEED_DEMO==='1') {
       owner.id,'Demostración · '+course.title,course.description,course.category,program)).id;
     for(const [index,[title,content]] of course.lessons.entries()) {
      const isLast=index===course.lessons.length-1;
-     await run('INSERT INTO lessons(course,title,content,file,bytes) VALUES (?,?,?,?,?)',
-       id,title,content,isLast?'Actividad-practica.txt':'',isLast?Buffer.from(course.activity,'utf8'):null);
+     await run('INSERT INTO lessons(course,title,content,file,bytes,video_url) VALUES (?,?,?,?,?,?)',
+       id,title,content,isLast?'Actividad-practica.pdf':'',isLast?await demoWorksheet(course):null,
+       index===0?(course.videoUrl??''):'');
     }
     await run('INSERT INTO quizzes(course,questions) VALUES (?,?)',id,JSON.stringify(checkQuestions(course.questions)));
    }
@@ -135,7 +158,7 @@ export const server=createServer(async(req,res)=>{
  res.setHeader('X-Content-Type-Options','nosniff');
  res.setHeader('Referrer-Policy','same-origin');
  res.setHeader('Cache-Control','no-store');
- res.setHeader('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+ res.setHeader('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; style-src 'self'; frame-src 'self' https://www.youtube-nocookie.com https://player.vimeo.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
  const json=(data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));};
  const token=req.headers.cookie?.match(/(?:^|; )session=([a-f0-9]+)/)?.[1]||'';
  const user=await get('SELECT u.id,u.name,u.email,u.role FROM users u JOIN sessions s ON s.uid=u.id WHERE s.token=? AND s.expiry>?',token,Date.now());
@@ -164,7 +187,11 @@ export const server=createServer(async(req,res)=>{
  if(method==='GET'&&path==='/api/mine'){
   auth();
   return json({
-   courses:await all('SELECT c.id,c.title,c.description,c.category FROM courses c JOIN enrollments e ON e.course=c.id WHERE e.uid=?',user.id),
+   courses:await all(`SELECT c.id,c.title,c.description,c.category,
+    (SELECT count(*) FROM lessons WHERE course=c.id)+(SELECT count(*) FROM quizzes WHERE course=c.id) AS activities,
+    (SELECT count(*) FROM lessons l JOIN progress p ON p.lesson=l.id AND p.uid=e.uid WHERE l.course=c.id)
+    +(SELECT count(*) FROM quizzes q JOIN passes p ON p.quiz=q.id AND p.uid=e.uid WHERE q.course=c.id) AS completed
+    FROM courses c JOIN enrollments e ON e.course=c.id WHERE e.uid=? ORDER BY c.id`,user.id),
    certificates:await all('SELECT code,title,issued,expires FROM certificates WHERE uid=? ORDER BY issued DESC',user.id)
   });
  }
@@ -187,9 +214,16 @@ export const server=createServer(async(req,res)=>{
   if(!course||(!course.published&&!staff(course))) fail(404,'Curso no disponible.');
   if(method==='GET'&&!action){
    const access=staff(course)||await enrolled(course);
-   return json({...course,staff:!!staff(course),enrolled:!!(await enrolled(course)),
-    lessons:access?await all('SELECT id,title,content,file,EXISTS(SELECT 1 FROM progress WHERE uid=? AND lesson=lessons.id) AS done FROM lessons WHERE course=? ORDER BY id',user.id,id):[],
-    quizzes:access?(await all('SELECT id,questions,EXISTS(SELECT 1 FROM passes WHERE uid=? AND quiz=quizzes.id) AS passed FROM quizzes WHERE course=? ORDER BY id',user.id,id)).map(row=>({...row,questions:JSON.parse(row.questions).map(({answer,...q})=>q)})):[]});
+   const learners=staff(course)?await all(`SELECT u.name,
+    (SELECT count(*) FROM lessons l JOIN progress p ON p.lesson=l.id AND p.uid=e.uid WHERE l.course=e.course) AS lessons,
+    (SELECT count(*) FROM quizzes q JOIN passes p ON p.quiz=q.id AND p.uid=e.uid WHERE q.course=e.course) AS quizzes
+    FROM enrollments e JOIN users u ON u.id=e.uid WHERE e.course=? ORDER BY u.name, u.id`,id):undefined;
+   return json({...course,staff:!!staff(course),enrolled:!!(await enrolled(course)),learners,
+    lessons:access?await all('SELECT id,title,content,file,video_url,EXISTS(SELECT 1 FROM progress WHERE uid=? AND lesson=lessons.id) AS done FROM lessons WHERE course=? ORDER BY id',user.id,id):[],
+    quizzes:access?(await all('SELECT id,title,passing_score,questions,EXISTS(SELECT 1 FROM passes WHERE uid=? AND quiz=quizzes.id) AS passed FROM quizzes WHERE course=? ORDER BY id',user.id,id)).map(row=>{
+     const questions=JSON.parse(row.questions);
+     return {...row,questions:staff(course)&&!course.published?questions:questions.map(({answer,...q})=>q)};
+    }):[]});
   }
   if(method==='POST'&&action==='enroll'){
    auth(['student']);
@@ -198,23 +232,46 @@ export const server=createServer(async(req,res)=>{
   if(method==='POST'&&['publish','lessons','quizzes'].includes(action)){
    auth(['teacher','admin']);
    if(!staff(course)) fail(403,'Este curso pertenece a otro docente.');
-   if(course.published) fail(409,'El curso ya está publicado y su contenido está cerrado.');
+   const editingMaterials=action==='lessons'&&Number.isInteger(item);
+   if(course.published&&!editingMaterials) fail(409,'El curso ya está publicado.');
    if(action==='publish'){
     if(!await get('SELECT 1 FROM lessons WHERE course=?',id)||!await get('SELECT 1 FROM quizzes WHERE course=?',id)) fail(400,'Agrega una clase y una evaluación antes de publicar.');
     await run('UPDATE courses SET published=1 WHERE id=?',id);
    }
    if(action==='lessons'){
     const data=await body(req),title=str(data.title,140),content=str(data.content,18000),file=str(data.file,180);
-    if((await get('SELECT published FROM courses WHERE id=?',id)).published) fail(409,'El curso ya está publicado.');
     const bytes=typeof data.bytes==='string'&&file?Buffer.from(data.bytes,'base64'):null;
-    if(!title||(!content&&!bytes?.length)) fail(400,'Agrega un título y el contenido de la clase.');
+    const videoUrl=str(data.videoUrl,2048);
+    if(videoUrl&&!videoEmbed(videoUrl)) fail(400,'Pega un enlace HTTPS de YouTube o Vimeo.');
     if(bytes?.length>8*1024*1024) fail(413,'El archivo excede 8 MB.');
-    await run('INSERT INTO lessons(course,title,content,file,bytes) VALUES (?,?,?,?,?)',id,title,content,bytes?.length?file:'',bytes);
+    if(/\.pdf$/i.test(file)&&bytes?.subarray(0,5).toString()!=='%PDF-') fail(400,'El archivo no es un PDF válido.');
+    if(editingMaterials){
+     const lesson=await get('SELECT content,file FROM lessons WHERE id=? AND course=?',item,id);
+     if(!lesson) fail(404,'Clase no disponible.');
+     if(!lesson.content&&!lesson.file&&!bytes?.length&&!videoUrl) fail(400,'La clase debe conservar algún material.');
+     if(bytes?.length) await run('UPDATE lessons SET file=?,bytes=?,video_url=? WHERE id=? AND course=?',file,bytes,videoUrl,item,id);
+     else await run('UPDATE lessons SET video_url=? WHERE id=? AND course=?',videoUrl,item,id);
+     return json({});
+    }
+    if((await get('SELECT published FROM courses WHERE id=?',id)).published) fail(409,'El curso ya está publicado.');
+    if(!title||(!content&&!bytes?.length&&!videoUrl)) fail(400,'Agrega un título y texto, un archivo o un video.');
+    await run('INSERT INTO lessons(course,title,content,file,bytes,video_url) VALUES (?,?,?,?,?,?)',id,title,content,bytes?.length?file:'',bytes,videoUrl);
    }
    if(action==='quizzes'){
-    const questions=checkQuestions((await body(req)).questions);
+    const data=await body(req);
+    const questions=checkQuestions(data.questions);
+    const title=str(data.title,140);
+    const passingScore=data.passingScore===undefined?70:Number(data.passingScore);
+    if(!Number.isInteger(passingScore)||passingScore<1||passingScore>100) fail(400,'El porcentaje de aprobación debe ser un número entre 1 y 100.');
     if((await get('SELECT published FROM courses WHERE id=?',id)).published) fail(409,'El curso ya está publicado.');
-    await run('INSERT INTO quizzes(course,questions) VALUES (?,?)',id,JSON.stringify(questions));
+    if(Number.isInteger(item)){
+     const updated=await get(`UPDATE quizzes SET questions=?,title=?,passing_score=?
+      WHERE id=? AND course=? AND EXISTS(SELECT 1 FROM courses WHERE id=? AND published=0) RETURNING id`,
+      JSON.stringify(questions),title,passingScore,item,id,id);
+     if(!updated) fail(409,'La evaluación ya no se puede editar.');
+     return json({});
+    }
+    await run('INSERT INTO quizzes(course,questions,title,passing_score) VALUES (?,?,?,?)',id,JSON.stringify(questions),title,passingScore);
    }
    return json({});
   }
@@ -222,7 +279,10 @@ export const server=createServer(async(req,res)=>{
    auth();if(!staff(course)&&!(await enrolled(course))) fail(403,'Inscríbete para descargar el material.');
    const lesson=await get('SELECT file,bytes FROM lessons WHERE id=? AND course=?',item,id);
    if(!lesson?.bytes) fail(404,'Archivo no disponible.');
-   res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':"attachment; filename*=UTF-8''"+encodeURIComponent(lesson.file).replace(/['()*]/g,c=>'%'+c.charCodeAt(0).toString(16))});
+   const preview=url.searchParams.get('preview')==='1'&&/\.pdf$/i.test(lesson.file)
+     &&Buffer.from(lesson.bytes.subarray(0,5)).toString()==='%PDF-';
+   if(preview) res.setHeader('Content-Security-Policy',"frame-ancestors 'self'");
+   res.writeHead(200,{'Content-Type':preview?'application/pdf':'application/octet-stream','Content-Disposition':(preview?'inline':'attachment')+"; filename*=UTF-8''"+encodeURIComponent(lesson.file).replace(/['()*]/g,c=>'%'+c.charCodeAt(0).toString(16))});
    return res.end(lesson.bytes);
   }
   if(method==='POST'&&['complete','submit','certificate'].includes(action)){
@@ -232,17 +292,18 @@ export const server=createServer(async(req,res)=>{
     await run('INSERT INTO progress VALUES (?,?) ON CONFLICT DO NOTHING',user.id,item);return json({});
    }
    if(action==='submit'){
-    const quiz=await get('SELECT questions FROM quizzes WHERE course=? AND id=?',id,item);
+    const quiz=await get('SELECT questions,passing_score FROM quizzes WHERE course=? AND id=?',id,item);
     if(!quiz) fail(404,'Evaluación no disponible.');
     const {answers}=await body(req), questions=JSON.parse(quiz.questions);
     if(!Array.isArray(answers)||answers.length!==questions.length) fail(400,'Responde todas las preguntas.');
-    const correct=questions.filter((q,i)=>grades(q,answers[i])).length;
-    const passed=correct*100>=questions.length*70;
-    const score=Number((100*correct/questions.length).toFixed(2));
+    const total=questions.reduce((sum,q)=>sum+(q.points??1),0);
+    const earned=questions.reduce((sum,q,i)=>sum+(grades(q,answers[i])?(q.points??1):0),0);
+    const passed=earned*100>=total*quiz.passing_score;
+    const score=Number((100*earned/total).toFixed(2));
     if(passed) await run('INSERT INTO passes VALUES (?,?) ON CONFLICT DO NOTHING',user.id,item);
-    return json({score,passed});
+    return json({score,passed,passingScore:quiz.passing_score});
    }
-   if((await all('SELECT id FROM lessons WHERE course=? AND id NOT IN (SELECT lesson FROM progress WHERE uid=?)',id,user.id)).length||(await all('SELECT id FROM quizzes WHERE course=? AND id NOT IN (SELECT quiz FROM passes WHERE uid=?)',id,user.id)).length) fail(409,'Completa todas las clases y aprueba las evaluaciones con al menos 70 %.');
+   if((await all('SELECT id FROM lessons WHERE course=? AND id NOT IN (SELECT lesson FROM progress WHERE uid=?)',id,user.id)).length||(await all('SELECT id FROM quizzes WHERE course=? AND id NOT IN (SELECT quiz FROM passes WHERE uid=?)',id,user.id)).length) fail(409,'Completa todas las clases y aprueba todas las evaluaciones.');
    const issued=new Date();
    await run('INSERT INTO certificates VALUES (?,?,?,?,?,?,?) ON CONFLICT DO NOTHING',randomBytes(16).toString('hex'),user.id,id,user.name,course.title,issued.toISOString(),expiry(issued));
    return json(await get('SELECT code FROM certificates WHERE uid=? AND course=?',user.id,id));
@@ -266,7 +327,7 @@ export const server=createServer(async(req,res)=>{
   }
   return json({...cert,program:await certificateProgram(course),valid:Date.now()<Date.parse(cert.expires)});
  }
- if(method==='GET'&&(['/','/styles.css','/portal.css','/app.js','/tema.js','/institucion.html','/historia.html','/institucion.css','/proteccion-civil.png','/proteccion-civil-tachira.png','/defensa-civil-tachira.png','/defensa-civil-tachira.gif','/sima-tachira.jpg','/yesnardo-canal-campo.png'].includes(path)||/^\/operativos\/(?:0[1-9]|1[0-2])\.png$/.test(path))){
+ if(method==='GET'&&(['/','/styles.css','/portal.css','/app.js','/lesson-media.js','/tema.js','/institucion.html','/historia.html','/institucion.css','/proteccion-civil.png','/proteccion-civil-tachira.png','/defensa-civil-tachira.png','/defensa-civil-tachira.gif','/sima-tachira.jpg','/yesnardo-canal-campo.png'].includes(path)||/^\/operativos\/(?:0[1-9]|1[0-2])\.png$/.test(path))){
   const file=path==='/'?'index.html':path.slice(1);
   const contentType={
    '.html':'text/html; charset=utf-8',

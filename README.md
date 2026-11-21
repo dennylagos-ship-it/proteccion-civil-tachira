@@ -23,11 +23,11 @@ Ejecuta la aplicación con almacenamiento persistente para `DATA_DIR` y configur
 
 El QR usa `PUBLIC_URL`. Si se omite, apunta al servidor local y sirve para pruebas en el equipo anfitrión.
 
-## Supabase y Netlify
+## Neon y Netlify
 
-1. En el proyecto Supabase, ejecuta `supabase/aula.sql` desde el editor SQL. Las tablas residen en un esquema privado y el navegador se comunica con el servidor del aula.
-2. Desde **Connect** de Supabase, usa la URI PostgreSQL del **Session pooler** como `DATABASE_URL`. Guárdala como variable secreta del servidor. La app conserva su inicio de sesión por correo y contraseña y guarda las cuentas, sesiones, cursos, archivos, inscripciones, avances y certificados en PostgreSQL.
+1. Vincula la CLI de Neon al proyecto exclusivo del aula con `neon init` y ejecuta `neon deploy` con el servicio Postgres. La CLI guarda las cadenas de conexión en `.env.local` o en el archivo `.env` existente.
+2. Ejecuta `npm run db:migrate` para preparar las tablas en Neon mediante la conexión directa `DATABASE_URL_UNPOOLED`. El servidor usa `DATABASE_URL` para guardar cuentas, sesiones, cursos, archivos, inscripciones, avances y certificados. Ejecuta `npm run build` para validar la sintaxis y `npm start` para iniciar el servidor local.
 3. Vincula el repositorio de GitHub a un proyecto de Netlify con acceso a **Netlify Server**. Configura `DATABASE_URL`, `PUBLIC_URL` (el origen HTTPS del portal), `ADMIN_EMAIL` y `ADMIN_PASSWORD` como variables de ejecución con alcance Functions. Usa `SEED_DEMO=1` solo si quieres llenar una base de prueba sin cursos.
 4. Después del despliegue, comprueba desde un dispositivo externo el registro, el inicio de sesión, una inscripción y la verificación de un certificado.
 
-Las bases SQLite locales y las credenciales se excluyen del repositorio. Para conservar datos previos al pasar a un proyecto Supabase nuevo, realiza una importación de datos por separado antes de habilitar el acceso público.
+Las bases SQLite locales y las credenciales se excluyen del repositorio. Si necesitas trasladar datos existentes a Neon, importa los datos antes de habilitar el acceso público.

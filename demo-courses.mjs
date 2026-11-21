@@ -23,6 +23,7 @@ export const demoCourses = [
   },
   {
     title: 'Plan familiar y evacuación',
+    videoUrl: 'https://www.youtube.com/watch?v=0V-1OUwFgjc',
     category: 'Prevención comunitaria',
     description: 'Diseña un plan familiar con rutas, punto de encuentro, responsables y una práctica de revisión.',
     lessons: [
